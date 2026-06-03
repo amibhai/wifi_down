@@ -124,16 +124,21 @@ def _print_network_table(networks: list[dict], caption: str = ''):
     print(C.BOLD + fmt.format('#', 'SSID', 'BSSID', 'CH', 'ENCRYPTION', 'PWR') + C.RESET)
     print(f"  {'─'*70}")
 
+    wep_found = any('WEP' in n.get('privacy', '').upper() for n in networks)
+
     for idx, net in enumerate(networks, 1):
         enc = net['privacy']
+        enc_up = enc.upper()
         # Color-code encryption type
-        if 'WPA3' in enc:
+        if 'WPA3' in enc_up:
             enc_colored = f"{C.GREEN}{enc}{C.RESET}"
-        elif 'WPA2' in enc:
+        elif 'WPA2' in enc_up:
             enc_colored = f"{C.YELLOW}{enc}{C.RESET}"
-        elif 'WPA' in enc:
+        elif 'WPA' in enc_up:
             enc_colored = f"{C.YELLOW}{enc}{C.RESET}"
-        elif 'OPN' in enc or enc == '':
+        elif 'WEP' in enc_up:
+            enc_colored = f"{C.BOLD}{C.MAGENTA}WEP ★{C.RESET}"   # WEP — highlighted
+        elif 'OPN' in enc_up or enc == '':
             enc_colored = f"{C.RED}OPEN{C.RESET}"
         else:
             enc_colored = enc
@@ -147,6 +152,9 @@ def _print_network_table(networks: list[dict], caption: str = ''):
             enc_colored,
             net['power'],
         ))
+
+    if wep_found:
+        print(f"\n  {C.MAGENTA}★ WEP network detected — use option [7] for fast WEP cracking{C.RESET}")
 
 
 def select_network(networks: list[dict]) -> dict | None:

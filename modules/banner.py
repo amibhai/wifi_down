@@ -28,8 +28,8 @@ BANNER = f"""{C.RED}{C.BOLD}
  ██║███╗██║██║██╔══╝  ██║     ██╔══██║██║   ██║██║  ██║██║   ██║   ██║   ██║██╔══██╗
  ╚███╔███╔╝██║██║     ╚══════╝██║  ██║╚██████╔╝██████╔╝██║   ██║   ╚██████╔╝██║  ██║
   ╚══╝╚══╝ ╚═╝╚═╝             ╚═╝  ╚═╝ ╚═════╝ ╚═════╝ ╚═╝   ╚═╝    ╚═════╝ ╚═╝  ╚═╝{C.RESET}
-{C.CYAN}          WPA2/WPA3 Automated Security Auditing Framework{C.RESET}
-{C.DIM}          For authorized penetration testing ONLY. v1.0{C.RESET}
+{C.CYAN}       WEP / WPA2 / WPA3 Automated Security Auditing Framework{C.RESET}
+{C.DIM}          For authorized penetration testing ONLY. v1.1{C.RESET}
 """
 
 DISCLAIMER = f"""
@@ -49,18 +49,22 @@ DISCLAIMER = f"""
 """
 
 MENU_TEMPLATE = f"""
-{C.CYAN}{'─'*55}{C.RESET}
+{C.CYAN}{'─'*60}{C.RESET}
   {C.BOLD}{C.WHITE}MAIN MENU{C.RESET}
-{C.CYAN}{'─'*55}{C.RESET}
+{C.CYAN}{'─'*60}{C.RESET}
+  {C.BOLD}{C.DIM}── WPA2 / WPA3 ───────────────────────────────────────{C.RESET}
   {C.GREEN}[1]{C.RESET} Select / Set Interface (monitor mode)
   {C.GREEN}[2]{C.RESET} Scan Nearby Networks
-  {C.GREEN}[3]{C.RESET} Capture Handshake
+  {C.GREEN}[3]{C.RESET} Capture Handshake  (passive / deauth / PMKID)
   {C.GREEN}[4]{C.RESET} Generate Wordlist
-  {C.GREEN}[5]{C.RESET} Crack Handshake
-  {C.GREEN}[6]{C.RESET} {C.BOLD}Full Auto Mode{C.RESET} (1→2→3→4→5)
-  {C.CYAN}[7]{C.RESET} Show Session State
+  {C.GREEN}[5]{C.RESET} Crack WPA2/WPA3 Handshake
+  {C.GREEN}[6]{C.RESET} {C.BOLD}Full Auto Mode{C.RESET} WPA2/WPA3  (1→2→3→4→5)
+  {C.BOLD}{C.DIM}── WEP ───────────────────────────────────────────────{C.RESET}
+  {C.MAGENTA}[7]{C.RESET} {C.BOLD}WEP Crack{C.RESET}  (ARP replay / fragmentation / ChopChop)
+  {C.BOLD}{C.DIM}── Misc ──────────────────────────────────────────────{C.RESET}
+  {C.CYAN}[8]{C.RESET} Show Session State
   {C.RED}[0]{C.RESET} Exit
-{C.CYAN}{'─'*55}{C.RESET}"""
+{C.CYAN}{'─'*60}{C.RESET}"""
 
 
 def print_banner():

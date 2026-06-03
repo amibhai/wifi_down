@@ -10,11 +10,32 @@ Automated WPA2/WPA3 security auditing framework. Menu-driven, end-to-end pipelin
 
 | Stage | What it does |
 |---|---|
-| **Scanner** | Puts adapter into monitor mode, runs `airodump-ng`, displays live table of nearby APs with SSID / BSSID / Channel / Encryption / Signal |
+| **Scanner** | Puts adapter into monitor mode, runs `airodump-ng`, displays live table of nearby APs with SSID / BSSID / Channel / Encryption / Signal. WEP networks are highlighted with ★ |
 | **Handshake Capture** | Three strategies: (1) passive wait, (2) deauth attack (`aireplay-ng -0`) to force client reconnect, (3) PMKID capture via `hcxdumptool` (no client needed) |
 | **Wordlist Generator** | 10 strategies — see below |
-| **Cracker** | Runs `aircrack-ng` against the `.cap` file; also supports `hashcat` mode 22000 for PMKID hashes |
-| **Full Auto Mode** | One keystroke to run the complete pipeline |
+| **WPA2/WPA3 Cracker** | Runs `aircrack-ng` against the `.cap` file; also supports `hashcat` mode 22000 for PMKID hashes |
+| **WEP Cracker** | Full IV-based attack pipeline — see below |
+| **Full Auto Mode** | One keystroke to run the complete WPA2/WPA3 pipeline |
+
+### WEP Cracker
+
+WEP is broken at the protocol level — cracking is statistical, not dictionary-based. No wordlist needed.
+
+| Mode | Tools used | Description |
+|---|---|---|
+| **ARP Replay** (recommended) | `aireplay-ng -1`, `-3` | Fake-auth with AP → replay ARP frames → flood IVs → crack |
+| **Fragmentation** | `aireplay-ng -1`, `-5`, `packetforge-ng`, `-2` | No client needed; extracts keystream fragment (.xor), crafts + injects ARP |
+| **ChopChop** | `aireplay-ng -1`, `-4`, `packetforge-ng`, `-2` | Decrypts a captured frame → crafts ARP → injects |
+| **Crack existing .cap** | `aircrack-ng` | You already have a capture file with IVs |
+
+**IV thresholds used:**
+- First crack attempt: 10,000 IVs
+- Re-attempt every: 5,000 new IVs
+- Give up after: 150,000 IVs (key may be extremely long or data corrupt)
+
+Typical crack times with ARP replay on a 40-bit (64-bit) WEP key: **< 2 minutes**. 104-bit (128-bit): **5–10 minutes**.
+
+aircrack-ng automatically tries both 64-bit and 128-bit key lengths.
 
 ### Wordlist Generator Strategies
 

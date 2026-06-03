@@ -23,6 +23,7 @@ from modules.scanner    import scan_networks, display_networks, select_network
 from modules.handshake  import capture_handshake_menu
 from modules.wordlist   import wordlist_menu
 from modules.cracker    import cracker_menu
+from modules.wep        import wep_crack_menu
 
 # ─── Session state ───────────────────────────────────────────────────────────
 state = {
@@ -190,6 +191,27 @@ def action_full_auto():
     cracker_menu(state['capture_file'], state['wordlist_file'])
 
 
+def action_wep():
+    """WEP cracking — IV capture + crack pipeline."""
+    if not state['monitor_interface']:
+        error("Set interface first (Option 1).")
+        return
+    if not state['target']:
+        error("Scan and select a target first (Option 2).")
+        return
+
+    enc = state['target'].get('privacy', '')
+    if 'WEP' not in enc.upper():
+        warn(f"Target encryption is '{enc}', not WEP.")
+        c = input(f"  {C.YELLOW}Continue anyway? [y/N]: {C.RESET}").strip().lower()
+        if c != 'y':
+            return
+
+    key = wep_crack_menu(state['monitor_interface'], state['target'])
+    if key:
+        state['result'] = key
+
+
 def action_show_state():
     print(f"\n  {C.CYAN}Session State:{C.RESET}")
     labels = {
@@ -218,7 +240,8 @@ ACTIONS = {
     '4': action_wordlist,
     '5': action_crack,
     '6': action_full_auto,
-    '7': action_show_state,
+    '7': action_wep,
+    '8': action_show_state,
 }
 
 def main():
