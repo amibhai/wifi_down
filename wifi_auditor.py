@@ -24,6 +24,7 @@ from modules.handshake  import capture_handshake_menu
 from modules.wordlist   import wordlist_menu
 from modules.cracker    import cracker_menu
 from modules.wep        import wep_crack_menu
+from modules.deauth     import deauth_menu
 
 # ─── Session state ───────────────────────────────────────────────────────────
 state = {
@@ -212,6 +213,15 @@ def action_wep():
         state['result'] = key
 
 
+def action_deauth():
+    """Standalone deauth attack with optional MAC spoof."""
+    if not state['monitor_interface']:
+        error("Set interface first (Option 1).")
+        return
+    # Pass current target if one is selected; otherwise deauth_menu asks for it
+    deauth_menu(state['monitor_interface'], state.get('target'))
+
+
 def action_show_state():
     print(f"\n  {C.CYAN}Session State:{C.RESET}")
     labels = {
@@ -242,6 +252,7 @@ ACTIONS = {
     '6': action_full_auto,
     '7': action_wep,
     '8': action_show_state,
+    '9': action_deauth,
 }
 
 def main():

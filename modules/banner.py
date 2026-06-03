@@ -61,6 +61,8 @@ MENU_TEMPLATE = f"""
   {C.GREEN}[6]{C.RESET} {C.BOLD}Full Auto Mode{C.RESET} WPA2/WPA3  (1→2→3→4→5)
   {C.BOLD}{C.DIM}── WEP ───────────────────────────────────────────────{C.RESET}
   {C.MAGENTA}[7]{C.RESET} {C.BOLD}WEP Crack{C.RESET}  (ARP replay / fragmentation / ChopChop)
+  {C.BOLD}{C.DIM}── Standalone Attacks ────────────────────────────────{C.RESET}
+  {C.RED}[9]{C.RESET} {C.BOLD}Deauth Attack{C.RESET}  (spoof AP MAC → disconnect clients)
   {C.BOLD}{C.DIM}── Misc ──────────────────────────────────────────────{C.RESET}
   {C.CYAN}[8]{C.RESET} Show Session State
   {C.RED}[0]{C.RESET} Exit

@@ -15,7 +15,27 @@ Automated WPA2/WPA3 security auditing framework. Menu-driven, end-to-end pipelin
 | **Wordlist Generator** | 10 strategies — see below |
 | **WPA2/WPA3 Cracker** | Runs `aircrack-ng` against the `.cap` file; also supports `hashcat` mode 22000 for PMKID hashes |
 | **WEP Cracker** | Full IV-based attack pipeline — see below |
+| **Deauth Attack** | Standalone client disconnection with MAC spoof + live stats — see below |
 | **Full Auto Mode** | One keystroke to run the complete WPA2/WPA3 pipeline |
+
+### Deauth Attack  `[9]`
+
+Standalone 802.11 deauthentication attack — works independently of the WPA crack pipeline.
+
+| Step | What happens |
+|---|---|
+| **Client scan** | `airodump-ng` sniffs the target AP's channel for 15 s and lists all associated client MACs |
+| **Target selection** | Pick specific client(s), all clients, broadcast (`FF:FF:FF:FF:FF:FF`), or enter a MAC manually |
+| **MAC spoof** | Our monitor interface MAC is changed to the AP's BSSID using `ip link` / `macchanger`. Every injected frame originates from the router's address at the driver level. Restored automatically when the attack ends. |
+| **Frame injection** | `aireplay-ng --deauth` sends bidirectional frames: AP→Client *and* Client→AP, forcing an immediate disconnect |
+| **Parallel attack** | One `aireplay-ng` process per selected client, all firing simultaneously |
+| **Live stats** | Full-screen display updates every second: packets sent + ACKs per target |
+| **Continuous / burst** | Run until Ctrl+C, or send exactly N frames and stop |
+
+**Use cases inside this tool:**
+- Force a WPA2 client to re-do the 4-way handshake (Option 3 uses this internally)
+- Verify a client is within injection range before a full attack
+- Standalone authorized network resilience testing
 
 ### WEP Cracker
 
