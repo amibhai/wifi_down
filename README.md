@@ -96,7 +96,7 @@ hcxdumptool   hcxtools   hashcat   crunch
 ## Installation
 
 ```bash
-git clone https://github.com/your-username/wifi-auditor.git
+git clone https://github.com/amibhai/wifi-down.git
 cd wifi-auditor
 sudo ./install.sh
 ```
