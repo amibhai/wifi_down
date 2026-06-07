@@ -44,7 +44,7 @@ from modules.deauth import deauth_menu
 from modules.wps import wps_menu, detect_wps_capability
 from modules.scope import ScopeManager, scope_wizard
 from modules.state import StateManager, Stage
-from modules.preflight import run_preflight
+from modules.preflight import run_preflight, run_preflight_with_autofix, SENTINEL_FILE
 from modules.sequencer import AttackSequencer
 from modules.report import generate_report
 from modules.ratelimit import DEFAULT_MAX_BURSTS_PER_MIN
@@ -74,6 +74,27 @@ def _cleanup() -> None:
             disable_monitor_mode(state["monitor_interface"])
         except Exception:
             pass
+
+
+def _check_first_run() -> None:
+    """
+    If the pre-flight sentinel has never been written, this is the first launch
+    after a fresh install (or a manual pip install without install.sh).
+    Run the preflight checker + auto-install automatically, then write the sentinel
+    so subsequent starts are fast.
+    """
+    if SENTINEL_FILE.exists():
+        return
+
+    warn("First launch detected — running pre-flight check and auto-install...")
+    warn("This only happens once. Future starts will skip this step.")
+    print()
+
+    try:
+        run_preflight_with_autofix()
+    except Exception as exc:
+        error(f"Pre-flight auto-check failed: {exc}")
+        info("Run  sudo wifi-auditor --preflight  to check manually.")
 
 
 ###############################################################################
@@ -597,6 +618,7 @@ def main() -> None:
 
     # ── Interactive menu ──────────────────────────────────────────────────────
     check_root()
+    _check_first_run()   # auto-preflight on very first launch (no-op after that)
     check_dependencies()
     print_banner()
 
