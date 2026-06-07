@@ -392,6 +392,33 @@ def gen_crunch(min_len: int, max_len: int, charset: str, out: str) -> int:
 # Strategy 9: Combine / merge wordlists
 # ─────────────────────────────────────────────────────────────────────────────
 
+def gen_vendor_defaults(bssid: str, out: str) -> int:
+    """Strategy 11 — vendor default passwords via IEEE OUI lookup."""
+    info(f"Looking up vendor defaults for {bssid} ...")
+    try:
+        from modules.oui import get_vendor, get_vendor_wordlist
+        vendor = get_vendor(bssid)
+        if vendor:
+            info(f"  Vendor: {vendor}")
+        passwords = get_vendor_wordlist(bssid)
+    except Exception as exc:
+        warn(f"OUI lookup failed: {exc}")
+        passwords = []
+
+    if not passwords:
+        warn(f"No vendor defaults found for {bssid}")
+        return 0
+
+    words: set = set()
+    for pwd in passwords:
+        words.add(pwd)
+        words.update(mutate(pwd))
+
+    count = _write_wordlist(words, out)
+    success(f"Vendor defaults wordlist: {count} entries → {out}")
+    return count
+
+
 def gen_combine(files: list[str], out: str) -> int:
     info(f"Merging {len(files)} wordlist(s) and deduplicating...")
     seen = set()
@@ -445,7 +472,7 @@ def wordlist_menu(ssid: str = None, auto: bool = False) -> str | None:
   {C.GREEN} [5]{C.RESET} Date Patterns                 {C.GREEN} [6]{C.RESET} Phone Number Patterns
   {C.GREEN} [7]{C.RESET} Keyboard Walk Patterns        {C.GREEN} [8]{C.RESET} Crunch Brute-Force
   {C.GREEN} [9]{C.RESET} Combine Multiple Wordlists    {C.GREEN}[10]{C.RESET} All Strategies
-  {C.CYAN}[11]{C.RESET} Use Existing Wordlist File
+  {C.CYAN}[11]{C.RESET} Vendor Defaults  (OUI lookup)  {C.CYAN}[12]{C.RESET} Use Existing Wordlist File
   {C.RED} [0]{C.RESET} Back
 """)
 
@@ -539,6 +566,16 @@ def wordlist_menu(ssid: str = None, auto: bool = False) -> str | None:
         return out
 
     elif choice == '11':
+        # Strategy 11: Vendor defaults via OUI lookup
+        bssid = input(f"  {C.YELLOW}Target BSSID (for vendor lookup): {C.RESET}").strip().upper()
+        out = os.path.join(WORDLIST_DIR, f'vendor_{stamp}.txt')
+        count = gen_vendor_defaults(bssid, out)
+        if count == 0:
+            warn("No vendor defaults found for this BSSID. Falling back to common passwords.")
+            gen_common(out)
+        return out
+
+    elif choice == '12':
         path = input(f"  {C.YELLOW}Path to wordlist file: {C.RESET}").strip()
         if os.path.exists(path):
             success(f"Using existing wordlist: {path}")
