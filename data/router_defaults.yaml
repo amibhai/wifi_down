@@ -1,0 +1,139 @@
+# Router vendor default password database
+# Used by modules/oui.py to generate vendor-specific wordlists.
+# {last4mac} is substituted with the last 4 hex chars of the BSSID.
+
+vendor_defaults:
+  "TP-Link":
+    default_ssid_patterns:
+      - "TP-Link_{last4mac}"
+      - "TP-LINK_{last4mac}"
+    passwords:
+      - "admin"
+      - "tp-link123"
+      - "tplink{last4mac}"
+      - "password"
+      - "12345678"
+      - "tplink1234"
+      - "wireless"
+      - "1234567890"
+
+  "Netgear":
+    default_ssid_patterns:
+      - "NETGEAR{last4mac}"
+    passwords:
+      - "admin"
+      - "password"
+      - "netgear"
+      - "1234567890"
+      - "password1"
+      - "admin1234"
+      - "12345678"
+
+  "D-Link":
+    default_ssid_patterns:
+      - "dlink"
+      - "D-Link_{last4mac}"
+    passwords:
+      - "admin"
+      - "dlink"
+      - "password"
+      - ""
+      - "1234"
+      - "d-link"
+      - "12345678"
+
+  "Linksys":
+    default_ssid_patterns:
+      - "linksys"
+      - "Linksys{last4mac}"
+    passwords:
+      - "admin"
+      - "linksys"
+      - "password"
+      - ""
+      - "cisco"
+      - "12345678"
+
+  "Asus":
+    default_ssid_patterns:
+      - "ASUS_{last4mac}"
+      - "ASUS"
+    passwords:
+      - "admin"
+      - "asus"
+      - "password"
+      - "1234"
+      - "router"
+      - "12345678"
+
+  "Belkin":
+    default_ssid_patterns:
+      - "belkin.{last4mac}"
+    passwords:
+      - "admin"
+      - ""
+      - "password"
+      - "belkin"
+      - "12345678"
+
+  "Huawei":
+    default_ssid_patterns:
+      - "HUAWEI-{last4mac}"
+    passwords:
+      - "admin"
+      - "huawei"
+      - "HuaWei"
+      - "12345678"
+      - "admin123"
+      - "Huawei@123"
+      - "1234567890"
+
+  "ZTE":
+    default_ssid_patterns:
+      - "ZTE_{last4mac}"
+    passwords:
+      - "admin"
+      - "zte"
+      - "12345678"
+      - "1234"
+      - "ZTE@123"
+      - "admin123"
+
+  "Cisco":
+    default_ssid_patterns:
+      - "Cisco{last4mac}"
+    passwords:
+      - "cisco"
+      - "admin"
+      - "password"
+      - ""
+      - "cisco123"
+      - "12345678"
+
+  "Ubiquiti":
+    default_ssid_patterns:
+      - "UniFi"
+    passwords:
+      - "ubnt"
+      - "admin"
+      - "ubiquiti"
+      - "password"
+      - "12345678"
+
+  "Buffalo":
+    default_ssid_patterns:
+      - "Buffalo-{last4mac}"
+    passwords:
+      - "password"
+      - "admin"
+      - "buffalo"
+      - "12345678"
+
+  "Motorola":
+    default_ssid_patterns:
+      - "Motorola-{last4mac}"
+    passwords:
+      - "motorola"
+      - "admin"
+      - "password"
+      - "12345678"
