@@ -57,8 +57,10 @@ MENU_TEMPLATE = f"""
   {C.GREEN}[2]{C.RESET} Scan Nearby Networks
   {C.GREEN}[3]{C.RESET} Capture Handshake  (passive / deauth / PMKID)
   {C.GREEN}[4]{C.RESET} Generate Wordlist
-  {C.GREEN}[5]{C.RESET} Crack WPA2/WPA3 Handshake
+  {C.GREEN}[5]{C.RESET} Crack  (aircrack / cowpatty / hashcat dict+rules)
   {C.GREEN}[6]{C.RESET} {C.BOLD}Full Auto Mode{C.RESET} WPA2/WPA3  (1→2→3→4→5)
+  {C.BOLD}{C.DIM}── WPS ───────────────────────────────────────────────{C.RESET}
+  {C.CYAN}[w]{C.RESET} {C.BOLD}WPS Attack{C.RESET}  (Pixie-Dust / PIN spray / brute-force)
   {C.BOLD}{C.DIM}── WEP ───────────────────────────────────────────────{C.RESET}
   {C.MAGENTA}[7]{C.RESET} {C.BOLD}WEP Crack{C.RESET}  (ARP replay / fragmentation / ChopChop)
   {C.BOLD}{C.DIM}── Standalone Attacks ────────────────────────────────{C.RESET}
