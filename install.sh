@@ -9,6 +9,10 @@ VENV_DIR="${HOME}/.wifi-auditor/venv"
 MIN_AIRCRACK_MAJOR=1
 MIN_AIRCRACK_MINOR=7
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+SENTINEL_FILE="${HOME}/.wifi-auditor/.preflight_done"
+
+# Will be set by detect_os() + install_packages() to the right install command
+_PKG_INSTALL=""
 
 ###############################################################################
 # Helpers
@@ -89,11 +93,13 @@ install_debian() {
     info "Detected Debian/Ubuntu/Kali/Parrot — using apt"
     apt-get update -qq
     apt-get install -y "${COMMON_APT_PKGS[@]}"
+    _PKG_INSTALL="apt-get install -y"
 }
 
 install_arch() {
     info "Detected Arch Linux — using pacman"
     pacman -Sy --noconfirm "${ARCH_PKGS[@]}"
+    _PKG_INSTALL="pacman -S --noconfirm --needed"
     for pkg in hcxdumptool hcxtools; do
         if ! command -v "$pkg" &>/dev/null; then
             warn "$pkg not in official repos — install from AUR: yay -S $pkg"
@@ -104,6 +110,7 @@ install_arch() {
 install_fedora() {
     info "Detected Fedora/RHEL — using dnf"
     dnf install -y "${FEDORA_PKGS[@]}"
+    _PKG_INSTALL="dnf install -y"
     if ! command -v hcxdumptool &>/dev/null; then
         warn "hcxdumptool not in dnf repos — building from source..."
         _build_hcxdumptool_fedora
@@ -135,6 +142,30 @@ install_packages() {
             esac
             ;;
     esac
+}
+
+###############################################################################
+# Tool presence helper
+###############################################################################
+
+# _ensure_tool BINARY "INSTALL COMMAND"
+# Checks if BINARY is on PATH; if not, runs INSTALL COMMAND (already as root).
+_ensure_tool() {
+    local binary="$1"
+    local install_cmd="$2"
+    if command -v "$binary" &>/dev/null; then
+        return 0
+    fi
+    if [[ -z "$install_cmd" ]]; then
+        warn "$binary not found and no install command available — skipping"
+        return 1
+    fi
+    info "$binary not found — installing..."
+    if eval "$install_cmd" &>/dev/null; then
+        success "$binary installed"
+    else
+        warn "$binary install failed — some features may be limited"
+    fi
 }
 
 ###############################################################################
@@ -193,6 +224,52 @@ LAUNCHER
 }
 
 ###############################################################################
+# First-time preflight: auto-install stragglers + display final status
+###############################################################################
+
+run_first_preflight() {
+    info "Running first-time pre-flight check..."
+
+    # ── Try to install optional/WPS tools that weren't in the main package list ──
+    if [[ -n "$_PKG_INSTALL" ]]; then
+        info "Ensuring optional tools are installed..."
+        _ensure_tool "reaver"    "$_PKG_INSTALL reaver"
+        _ensure_tool "wash"      "$_PKG_INSTALL reaver"    # wash ships with reaver
+        _ensure_tool "bully"     "$_PKG_INSTALL bully"
+        _ensure_tool "cowpatty"  "$_PKG_INSTALL cowpatty"
+        _ensure_tool "hashcat"   "$_PKG_INSTALL hashcat"
+        _ensure_tool "crunch"    "$_PKG_INSTALL crunch"
+        _ensure_tool "macchanger" "$_PKG_INSTALL macchanger"
+    fi
+
+    # ── Activate venv and run the Python preflight + auto-fix ─────────────────
+    # shellcheck disable=SC1091
+    source "${VENV_DIR}/bin/activate"
+
+    info "Launching Python pre-flight checker (auto-fix mode)..."
+    python - <<'PYEOF'
+import sys
+sys.path.insert(0, ".")
+try:
+    from modules.preflight import run_preflight_with_autofix
+    run_preflight_with_autofix()
+except Exception as e:
+    print(f"  [warn] preflight error: {e}")
+    # Fall back to plain preflight display only
+    try:
+        from modules.preflight import run_preflight
+        run_preflight(exit_on_failure=False)
+    except Exception:
+        pass
+PYEOF
+
+    # ── Write sentinel (Python side also writes it, but belt-and-suspenders) ──
+    mkdir -p "$(dirname "$SENTINEL_FILE")"
+    touch "$SENTINEL_FILE"
+    success "Pre-flight sentinel written: ${SENTINEL_FILE}"
+}
+
+###############################################################################
 # Directory setup
 ###############################################################################
 
@@ -235,11 +312,13 @@ main() {
     setup_dirs
     create_launcher
 
+    # First-time preflight: auto-install stragglers + verify everything
+    run_first_preflight
+
     echo
     success "Installation complete!"
-    echo -e "  Run: ${BOLD}sudo wifi-auditor${RESET}"
-    echo -e "  Or:  ${BOLD}sudo python3 wifi_auditor.py${RESET}"
-    echo -e "  Pre-flight check: ${BOLD}wifi-auditor --preflight${RESET}"
+    echo -e "  Run:             ${BOLD}sudo wifi-auditor${RESET}"
+    echo -e "  Re-check anytime:${BOLD}sudo wifi-auditor --preflight${RESET}"
     echo
     warn "Only use on networks you own or have written authorization to test."
 }
