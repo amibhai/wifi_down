@@ -1,0 +1,13 @@
+# WiFi Auditor — scope.yaml
+# List every target you are authorized to test here.
+# Run `wifi-auditor --scope-wizard` for an interactive guided setup.
+#
+# IMPORTANT: Only add networks you OWN or have WRITTEN PERMISSION to test.
+# Unauthorized access is illegal in most jurisdictions.
+
+authorized_targets:
+  # - bssid: "AA:BB:CC:DD:EE:FF"
+  #   ssid: "MyHomeNetwork"
+  #   authorized_by: "John Doe (owner)"
+  #   valid_until: "2026-12-31"
+  #   notes: "Written authorization email received 2026-06-01"

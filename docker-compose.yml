@@ -1,0 +1,34 @@
+version: "3.9"
+
+services:
+  wifi-auditor:
+    build: .
+    image: wifi-auditor:latest
+    container_name: wifi-auditor
+
+    # Required for raw socket / packet injection access
+    privileged: true
+    network_mode: host
+
+    # USB passthrough for external wireless adapters
+    devices:
+      - /dev/bus/usb:/dev/bus/usb
+
+    # Persist captures, wordlists, results, and scope between runs
+    volumes:
+      - ./captures:/opt/wifi-auditor/captures
+      - ./wordlists:/opt/wifi-auditor/wordlists
+      - ./results:/opt/wifi-auditor/results
+      - ./scope.yaml:/opt/wifi-auditor/scope.yaml:ro
+      - wifi_auditor_home:/root/.wifi-auditor
+
+    stdin_open: true
+    tty: true
+
+    # Default to interactive menu; override for headless mode:
+    #   docker-compose run wifi-auditor --headless --scope scope.yaml --target AA:BB:CC:DD:EE:FF --auto
+    command: []
+
+volumes:
+  wifi_auditor_home:
+    driver: local
