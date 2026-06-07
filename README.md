@@ -56,6 +56,11 @@ The script auto-detects your OS and uses the correct package manager:
 
 After install, a Python venv is created at `~/.wifi-auditor/venv` and a launcher at `/usr/local/bin/wifi-auditor`.
 
+At the end of `install.sh`, the new `run_first_preflight()` function:
+1. Calls `_ensure_tool` for every optional/WPS binary (`reaver`, `wash`, `bully`, `cowpatty`, `hashcat`, `crunch`, `macchanger`) — installing any that are missing via the already-selected package manager.
+2. Sources the Python venv and runs `run_preflight_with_autofix()` (two-pass: show table → auto-install stragglers → re-show table).
+3. Writes the sentinel `~/.wifi-auditor/.preflight_done` (both from Python and from bash — belt-and-suspenders).
+
 ### Manual
 
 ```bash
@@ -63,6 +68,59 @@ sudo apt-get install aircrack-ng hcxdumptool hcxtools hashcat crunch macchanger 
      reaver bully wash cowpatty
 pip install -r requirements.txt
 ```
+
+> [!NOTE]
+> If you skip `install.sh`, the sentinel will be absent. The **first** `sudo wifi-auditor` launch
+> will automatically detect this and run `run_preflight_with_autofix()` for you. All subsequent
+> starts are instant — the sentinel check is a single `Path.exists()` call.
+
+---
+
+## Auto-Setup & First-Run Flow
+
+WiFi Auditor uses a sentinel file (`~/.wifi-auditor/.preflight_done`) to ensure the full
+dependency check runs **exactly once** — either at the end of `install.sh` or on the very first
+manual launch — and never again slows startup after that.
+
+```
+sudo ./install.sh
+  ├─ apt/pacman/dnf: install core packages
+  ├─ setup Python venv + pip install
+  ├─ create /usr/local/bin/wifi-auditor
+  └─ run_first_preflight()
+       ├─ _ensure_tool reaver / wash / bully / cowpatty / ...
+       │    └─ if missing → apt-get install -y <pkg>  (auto)
+       ├─ source venv → run_preflight_with_autofix()
+       │    ├─ Pass 1 : display full dependency table
+       │    ├─ auto_install_missing() → installs anything still absent
+       │    ├─ Pass 2 : re-display table confirming everything fixed
+       │    └─ write ~/.wifi-auditor/.preflight_done
+       └─ sentinel also written by bash (belt-and-suspenders)
+
+Next launch:  sudo wifi-auditor
+  ├─ check_root()
+  ├─ _check_first_run()  →  sentinel exists  →  returns immediately (no-op)
+  ├─ check_dependencies()
+  └─ print_banner() → menu
+
+Manual install path (no install.sh):
+  First  sudo wifi-auditor
+  ├─ _check_first_run()  →  no sentinel
+  ├─ run_preflight_with_autofix()  (same two-pass flow)
+  └─ sentinel written → all future starts are instant
+
+Manual re-check at any time:
+  sudo wifi-auditor --preflight   ← always works, never writes sentinel
+```
+
+### Sentinel details
+
+| Path | `~/.wifi-auditor/.preflight_done` |
+|---|---|
+| Created by | `install.sh` (bash `touch`) AND `run_preflight_with_autofix()` (Python `Path.touch()`) |
+| Effect when present | `_check_first_run()` in `cli.py` returns immediately |
+| Delete to re-trigger | `rm ~/.wifi-auditor/.preflight_done` then `sudo wifi-auditor` |
+| Does `--preflight` write it? | **No** — `--preflight` is always a fresh check |
 
 ---
 
@@ -101,34 +159,74 @@ If the adapter doesn't appear: check `lsusb` on the host; ensure the kernel driv
 
 ## Pre-flight Checker
 
-Run before every session to verify all dependencies:
+Run a manual dependency check at any time:
 
 ```bash
 sudo wifi-auditor --preflight
 ```
 
-Example output:
+This **always** performs a fresh check and **never** writes the sentinel, so it is safe to use for
+diagnostics without affecting the auto-setup flow.
+
+### What is checked
+
+| Tool | Required | Purpose |
+|---|---|---|
+| python ≥ 3.10 | YES | Runtime |
+| airmon-ng, airodump-ng, aireplay-ng, aircrack-ng | YES | Core capture + crack |
+| iw, ip | YES | Interface management |
+| hcxdumptool, hcxpcapngtool | opt | PMKID capture + .cap→hc22000 conversion |
+| hashcat | opt | GPU cracking |
+| crunch | opt | Brute-force wordlist generation |
+| macchanger | opt | MAC randomisation |
+| **reaver** | opt | WPS Pixie-Dust + PIN brute-force |
+| **wash** | opt | WPS AP discovery (ships with reaver package) |
+| **bully** | opt | WPS alternate backend |
+| **cowpatty** | opt | PMK-cache optimised cracking |
+
+### auto_install_missing()
+
+When called from `run_preflight_with_autofix()`, this function:
+1. Detects the package manager (`apt-get`, `pacman`, or `dnf`).
+2. Deduplicates packages — `airmon-ng`, `airodump-ng`, `aireplay-ng`, and `aircrack-ng` all map to the `aircrack-ng` package; `wash` maps to `reaver` since they ship together.
+3. Runs the install command for each unique package.
+4. Reports success/failure per package.
+
+```
+Package mapping examples (TOOL_PACKAGES):
+  airmon-ng, airodump-ng, aireplay-ng, aircrack-ng → aircrack-ng
+  wash                                              → reaver  (same package)
+  hcxpcapngtool                                     → hcxtools
+  ip                                                → iproute2 (apt) / iproute (dnf)
+```
+
+### Example output
 
 ```
 ╔══════════════════════════════════════╗
-║      WiFi Auditor — Pre-Flight       ║
+║      WiFi Auditor -- Pre-Flight      ║
 ╚══════════════════════════════════════╝
 
-┌──────────────┬───────┬─────────────┬───────┬─────────────────────┐
-│ Tool         │ Found │ Version     │ Req'd │ Status              │
-├──────────────┼───────┼─────────────┼───────┼─────────────────────┤
-│ python       │   ✓   │ 3.11.2      │  YES  │ OK (>=3.10)         │
-│ airmon-ng    │   ✓   │ 1.7         │  YES  │ OK                  │
-│ airodump-ng  │   ✓   │ 1.7         │  YES  │ OK                  │
-│ aireplay-ng  │   ✓   │ 1.7         │  YES  │ OK                  │
-│ aircrack-ng  │   ✓   │ 1.7         │  YES  │ OK (>=1.7)          │
-│ hcxdumptool  │   ✓   │ 6.2.7       │  opt  │ OK                  │
-│ hashcat      │   ✓   │ 6.2.6       │  opt  │ OK                  │
-│ reaver       │   ✓   │ 1.6.6       │  opt  │ OK (WPS)            │
-│ bully        │   ✓   │ 1.4         │  opt  │ OK (WPS alt)        │
-│ wash         │   ✓   │ 1.6.6       │  opt  │ OK (WPS scan)       │
-│ cowpatty     │   ✓   │ 4.8         │  opt  │ OK (PMK crack)      │
-└──────────────┴───────┴─────────────┴───────┴─────────────────────┘
+┌──────────────────┬───────┬─────────────┬───────┬──────────────────────────────────────┐
+│ Tool             │ Found │ Version     │ Req'd │ Status                               │
+├──────────────────┼───────┼─────────────┼───────┼──────────────────────────────────────┤
+│ python           │  OK   │ 3.11.2      │  YES  │ OK (>=3.10)                          │
+│ airmon-ng        │  OK   │ 1.7         │  YES  │ OK                                   │
+│ airodump-ng      │  OK   │ 1.7         │  YES  │ OK                                   │
+│ aireplay-ng      │  OK   │ 1.7         │  YES  │ OK                                   │
+│ aircrack-ng      │  OK   │ 1.7         │  YES  │ OK (>=1.7)                           │
+│ iw               │  OK   │ 5.19        │  YES  │ OK                                   │
+│ ip               │  OK   │ 5.18        │  YES  │ OK                                   │
+│ hcxdumptool      │  OK   │ 6.2.7       │  opt  │ OK                                   │
+│ hcxpcapngtool    │  OK   │ 6.2.7       │  opt  │ OK                                   │
+│ hashcat          │  OK   │ 6.2.6       │  opt  │ OK                                   │
+│ crunch           │  OK   │ 3.6         │  opt  │ OK                                   │
+│ macchanger       │  OK   │ 1.7.0       │  opt  │ OK                                   │
+│ reaver           │  OK   │ 1.6.6       │  opt  │ OK                                   │
+│ wash             │  OK   │ 1.6.6       │  opt  │ OK                                   │
+│ bully            │  OK   │ 1.4         │  opt  │ OK                                   │
+│ cowpatty         │  OK   │ 4.8         │  opt  │ OK                                   │
+└──────────────────┴───────┴─────────────┴───────┴──────────────────────────────────────┘
 
 ┌──────────────┬──────────────┬──────────────┬─────┐
 │ Interface    │ Monitor Mode │ In /proc/net │ Inj │

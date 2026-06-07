@@ -5,6 +5,43 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [0.3.1] — 2026-06-08
+
+### Added
+- `modules/preflight.py`:
+  - `SENTINEL_FILE` constant (`~/.wifi-auditor/.preflight_done`) — shared with `cli.py` so both agree on the single path.
+  - `OPTIONAL_TOOLS` — extended with `reaver`, `wash`, `bully`, `cowpatty` (shown in the pre-flight table alongside hcxdumptool, hashcat, crunch, macchanger).
+  - `TOOL_PACKAGES` dict — maps every tool name to its `apt` / `pacman` / `dnf` package name; `wash` correctly maps to `reaver` (ships in the same package on all distros).
+  - `detect_package_manager()` — detects `apt-get`, `pacman`, `dnf`, or `yum` from PATH.
+  - `auto_install_missing(statuses)` — deduplicates packages (e.g. `airmon-ng` + `airodump-ng` + `aireplay-ng` + `aircrack-ng` all map to one `aircrack-ng` install), runs the appropriate install command, reports success/failure per package.
+  - `run_preflight()` signature updated — now returns `(bool, list[ToolStatus])` so callers can act on the results instead of only reading stdout.
+  - `run_preflight_with_autofix()` — new main entry point: pass 1 (display table) → `auto_install_missing()` → pass 2 (confirm fixes) → write sentinel.
+
+- `install.sh`:
+  - `SENTINEL_FILE` bash variable — mirrors the Python constant.
+  - `_PKG_INSTALL` variable — set inside each `install_*` function so `run_first_preflight` knows which install command to use.
+  - `_ensure_tool(binary, install_cmd)` — checks PATH, installs if absent, warns on failure.
+  - `run_first_preflight()` — called at the end of `main()`, after `create_launcher`:
+    1. Calls `_ensure_tool` for `reaver`, `wash` (→ reaver pkg), `bully`, `cowpatty`, `hashcat`, `crunch`, `macchanger`.
+    2. Sources the venv and runs `run_preflight_with_autofix()` via inline Python heredoc.
+    3. Writes sentinel from bash (`touch`) as belt-and-suspenders backup.
+
+- `wifi_auditor/cli.py`:
+  - Imports `run_preflight_with_autofix`, `SENTINEL_FILE` from `modules.preflight`.
+  - `_check_first_run()` — checks if `SENTINEL_FILE` exists; if absent, calls `run_preflight_with_autofix()` with a one-time warning; no-op on all subsequent launches.
+  - `main()` — calls `_check_first_run()` right after `check_root()`, before `print_banner()`, only in interactive mode (not headless/auto).
+
+### Flow summary
+
+```
+sudo ./install.sh  →  run_first_preflight()  →  sentinel written
+sudo wifi-auditor  →  _check_first_run()  →  sentinel exists  →  instant start
+sudo wifi-auditor  →  _check_first_run()  →  no sentinel  →  auto-preflight (first pip-only install)
+sudo wifi-auditor --preflight  →  always fresh check, never writes sentinel
+```
+
+---
+
 ## [0.3.0] — 2026-06-08
 
 ### Added
