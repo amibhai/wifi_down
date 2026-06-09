@@ -1,14 +1,33 @@
-# WiFi Auditor — Python dependencies
+# wifi_down — Python dependencies
 # Install with: pip install -r requirements.txt
 #
 # NOTE: The core aircrack-ng suite must be installed via the system
 # package manager (see install.sh or README). These are pure-Python extras.
 
+# ── Core ──────────────────────────────────────────────────────────────────────
 scapy>=2.5.0
-rich>=13.0.0
+rich>=13.7.0
 pyyaml>=6.0
 cryptography>=41.0.0
 requests>=2.31.0
 colorama>=0.4.6
 tabulate>=0.9.0
 tqdm>=4.66.0
+
+# ── Gap-closer features ───────────────────────────────────────────────────────
+httpx>=0.27.0            # Ghost Signal Tracker async HTTP (NVD, RouterSploit, Shodan)
+
+# ── Leapfrog features — install from pip ─────────────────────────────────────
+# PDF Report Engine (either one works; reportlab preferred)
+reportlab>=4.0.0
+# weasyprint>=61.0        # uncomment as alternative PDF engine
+
+# PRISM TUI (opt-in, requires --prism flag)
+textual>=0.57.0
+
+# Neural Pathfinder (requires API key, graceful degradation if absent)
+openai>=1.30.0
+
+# Signal Intercept REST API (bettercap event bridge — optional)
+# fastapi>=0.110.0
+# uvicorn>=0.29.0
