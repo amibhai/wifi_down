@@ -52,6 +52,7 @@ detect_os() {
 ###############################################################################
 
 COMMON_APT_PKGS=(
+    # Core wireless tools
     aircrack-ng
     hcxdumptool
     hcxtools
@@ -63,6 +64,12 @@ COMMON_APT_PKGS=(
     python3
     python3-pip
     python3-venv
+    # Gap-closer features: Phantom AP + Signal Intercept
+    hostapd
+    dnsmasq
+    nginx
+    curl
+    # Signal Intercept — bettercap installed separately below (Go binary)
 )
 
 ARCH_PKGS=(
@@ -76,6 +83,10 @@ ARCH_PKGS=(
     iproute2
     python
     python-pip
+    hostapd
+    dnsmasq
+    nginx
+    curl
 )
 
 FEDORA_PKGS=(
@@ -87,6 +98,10 @@ FEDORA_PKGS=(
     iproute
     python3
     python3-pip
+    hostapd
+    dnsmasq
+    nginx
+    curl
 )
 
 install_debian() {
@@ -227,24 +242,59 @@ LAUNCHER
 # First-time preflight: auto-install stragglers + display final status
 ###############################################################################
 
+_install_bettercap() {
+    # bettercap is a Go binary — install from apt on Kali/Parrot, else skip
+    if command -v bettercap &>/dev/null; then
+        success "bettercap already installed"
+        return
+    fi
+    info "Installing bettercap (Signal Intercept dependency)..."
+    case "$OS_ID" in
+        kali|parrot|debian|ubuntu)
+            apt-get install -y bettercap 2>/dev/null || \
+                warn "bettercap not in apt repos — install manually: https://www.bettercap.org/installation/"
+            ;;
+        arch|manjaro|endeavouros)
+            pacman -S --noconfirm bettercap 2>/dev/null || \
+                warn "bettercap not in pacman repos — install via AUR or manually"
+            ;;
+        *)
+            warn "bettercap auto-install not supported on $OS_ID — install manually from https://www.bettercap.org"
+            ;;
+    esac
+}
+
 run_first_preflight() {
     info "Running first-time pre-flight check..."
 
     # ── Try to install optional/WPS tools that weren't in the main package list ──
     if [[ -n "$_PKG_INSTALL" ]]; then
         info "Ensuring optional tools are installed..."
-        _ensure_tool "reaver"    "$_PKG_INSTALL reaver"
-        _ensure_tool "wash"      "$_PKG_INSTALL reaver"    # wash ships with reaver
-        _ensure_tool "bully"     "$_PKG_INSTALL bully"
-        _ensure_tool "cowpatty"  "$_PKG_INSTALL cowpatty"
-        _ensure_tool "hashcat"   "$_PKG_INSTALL hashcat"
-        _ensure_tool "crunch"    "$_PKG_INSTALL crunch"
+        _ensure_tool "reaver"     "$_PKG_INSTALL reaver"
+        _ensure_tool "wash"       "$_PKG_INSTALL reaver"    # wash ships with reaver
+        _ensure_tool "bully"      "$_PKG_INSTALL bully"
+        _ensure_tool "cowpatty"   "$_PKG_INSTALL cowpatty"
+        _ensure_tool "hashcat"    "$_PKG_INSTALL hashcat"
+        _ensure_tool "crunch"     "$_PKG_INSTALL crunch"
         _ensure_tool "macchanger" "$_PKG_INSTALL macchanger"
+        # Gap-closer tools
+        _ensure_tool "hostapd"    "$_PKG_INSTALL hostapd"
+        _ensure_tool "dnsmasq"    "$_PKG_INSTALL dnsmasq"
+        _ensure_tool "nginx"      "$_PKG_INSTALL nginx"
+        _ensure_tool "curl"       "$_PKG_INSTALL curl"
     fi
+
+    # ── bettercap (Signal Intercept) ──────────────────────────────────────────
+    _install_bettercap
 
     # ── Activate venv and run the Python preflight + auto-fix ─────────────────
     # shellcheck disable=SC1091
     source "${VENV_DIR}/bin/activate"
+
+    # ── Leapfrog Python packages (installed in venv) ──────────────────────────
+    info "Installing leapfrog Python packages..."
+    pip install -q reportlab textual openai httpx 2>/dev/null || \
+        warn "Some leapfrog packages failed to install — run: pip install reportlab textual openai httpx"
 
     info "Launching Python pre-flight checker (auto-fix mode)..."
     python - <<'PYEOF'
