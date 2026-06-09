@@ -16,7 +16,9 @@ Automated WiFi security auditing framework. Menu-driven, end-to-end pipeline:
 | **Scanner** | Monitor mode scan via `airodump-ng` with SSID entropy + vendor tags + WPA3 downgrade detection |
 | **WPS Attacks** | Pixie-Dust (offline nonce) / Vendor PIN spray (OUI-matched) / Full brute-force / Wash scan |
 | **Handshake Capture** | Passive / deauth / PMKID — scope-gated and consent-prompted |
-| **Wordlist Generator** | 12 strategies including OUI vendor defaults and CUPP-style personal profiling |
+| **Wordlist Generator** | 14 strategies: CUPP-style personal profiling, token pattern builder, smart scenario engine + QoL stats panel |
+| **Pattern Engine** | Token-based custom wordlist builder (`%W/%Y/%s/[abc]/{text}`) with save/reload, estimate, tqdm progress |
+| **Smart Scenario Engine** | 5 real-world profiles (Indian Mobile User, Corporate, Student, Consumer, Custom) sorted by breach frequency |
 | **Cracker** | `aircrack-ng` + `cowpatty` + `hashcat` dict + `hashcat` rule-based (best64, d3ad0ne, dive…) |
 | **WEP Cracker** | ARP replay / fragmentation / ChopChop pipelines |
 | **Deauth Attack** | Rate-limited, consent-required, scope-enforced |
@@ -520,7 +522,7 @@ The report includes SHA-256 of the capture file as evidence integrity.
 | 1 | SSID Mutations | leet, caps, year/number/symbol affixes |
 | 2 | Common Passwords | Built-in top-200 + optional rockyou.txt |
 | 3 | Custom Seeds | Provide seed words → mutate |
-| 4 | Personal Info (CUPP-style) | Name, DOB, pet, company |
+| 4 | Personal Info (CUPP-style) | 13-field collector, 10 mutation families, probability-sorted output |
 | 5 | Date Patterns | All DDMMYYYY / YYYYMMDD combinations |
 | 6 | Phone Numbers | 10-digit + country-code variants |
 | 7 | Keyboard Walks | qwerty, 1q2w3e4r, etc. |
@@ -529,8 +531,86 @@ The report includes SHA-256 of the capture file as evidence integrity.
 | 10 | All Strategies | Run everything combined |
 | **11** | **Vendor Defaults** | **OUI lookup → router model defaults (30-day cache)** |
 | 12 | Use Existing File | Load a wordlist from disk |
+| **13** | **Custom Pattern Builder** | Token-based patterns saved to `~/.wifi-auditor/custom_patterns.json`; `estimate_count()` before commit |
+| **14** | **Smart Scenario Engine** | 5 profiles sorted by real-world breach frequency; Indian Mobile User produces `parv@2003` first |
 
 Strategy 11 downloads the IEEE OUI database (cached 30 days at `~/.wifi-auditor/oui.db`) and returns default passwords for the detected router vendor (TP-Link, Netgear, D-Link, Huawei, etc.).
+
+### Strategy 4 — Personal Info (rebuilt)
+
+Collects 13 fields (`firstname`, `lastname`, `nickname`, `partner_name`, `pet_name`, `company`, `city`, `favourite_word`, `favourite_number`, `dob_full`, `partner_dob`, `phone`, `keywords`) and runs **10 mutation families** in probability order:
+
+| Family | Examples produced |
+|---|---|
+| 1 | `parv@2003`, `Parv2003`, `PARV2003`, `parv.2003`, `parv03` |
+| 2 | `p@rv2003`, `p@rv@2003` (leet + year) |
+| 3 | `parv2003!`, `Parv2003@`, `!parv2003` (name + year + special) |
+| 4 | `parv`, `PARV`, `Parv`, `vrap` (raw case / leet / reversed) |
+| 5 | name + favourite number / phone tail |
+| 6 | Traditional affixes (`COMMON_SUFFIXES` + year concat) |
+| 7 | 2-word combos: `parvkumar`, `Parv_Kumar`, `ParvKumar2003` |
+| 8 | Keyboard walks: `parv1234`, `Parvasdf` |
+| 9 | Date strings: `15082003`, `15-08-2003`, `parv15082003` |
+| 10 | Zero-padding: `parv00`, `parv007`, `Parv99` |
+
+### Strategy 13 — Custom Pattern Builder
+
+Token reference:
+
+| Token | Expands to |
+|---|---|
+| `%W` / `%w` / `%U` / `%T` | pool words (as-is / lower / UPPER / Title) |
+| `%L` / `%r` | leet substitution / reversed |
+| `%Y` / `%y` | 4-digit / 2-digit years from session |
+| `%s` / `%S` / `%k` | special char / symbol pair / keyboard walk |
+| `%n` / `%2` / `%4` | single digit / 2-digit / 4-digit number |
+| `%N` | favourite number(s) from session |
+| `[abc]` | one char from set |
+| `{text}` | literal string |
+
+Patterns are saved to `~/.wifi-auditor/custom_patterns.json` and reloaded on next run. `estimate_count()` shows the candidate count before you commit, and an optional `tqdm` progress bar fires if installed.
+
+```
+  Examples:
+    %T@%Y      →  Parv@2003
+    %w%s%Y     →  parv!2003  parv@2003  parv#2003 …
+    %T[!@#]%y  →  Parv!03   Parv@03   Parv#03
+    %w_%Y%s    →  parv_2003!  parv_2003@ …
+```
+
+### Strategy 14 — Smart Scenario Engine
+
+5 profiles sorted by real-world breach frequency:
+
+| Profile | Top patterns generated |
+|---|---|
+| **Indian Mobile User** | `parv@2003`, `parv2003`, `Parv2003`, `parv.2003`, `PARV2003` … |
+| **Corporate Employee** | `Parv@2003`, `parv2003`, `Parv2003!` … |
+| **Student** | `parv2003`, `Parv2003`, `parv@2003`, `parv03`, `parv123` … |
+| **General Consumer** | `parv2003`, `Parv2003`, `parv@2003`, `parv!`, `Parv!2003` … |
+| **Custom** | Opens interactive Pattern Builder (Strategy 13) |
+
+### Post-Generation QoL
+
+After every wordlist run a stats panel is printed:
+
+```
+  ──────────────────────────────────────────────────
+  Candidates:  14,823
+  File:        wordlists/personal_20260609_130000.txt
+  Size:        142.3 KB
+  Est. crack time @ 1M h/s: 0s
+
+  Top 10 (highest-priority) candidates:
+     1. parv@2003
+     2. parv2003
+     3. Parv2003
+     …
+```
+
+Then two optional prompts:
+- **Dedup against existing wordlist** — strips already-seen entries before cracking
+- **Pipe directly to cracker** — launches `cracker_menu()` immediately
 
 ---
 
@@ -550,6 +630,7 @@ wifi-auditor/
 │   ├── handshake.py            Passive / deauth / PMKID capture (+ --fast support)
 │   ├── logger.py               JSON-lines session logger
 │   ├── oui.py                  IEEE OUI database + vendor defaults
+│   ├── pattern_engine.py       Token-based pattern expansion engine (Strategy 13 backend)
 │   ├── pmkid.py                PMKID extraction + hashcat
 │   ├── preflight.py            Pre-flight system checker
 │   ├── ratelimit.py            Token-bucket deauth rate limiter
@@ -562,7 +643,7 @@ wifi-auditor/
 │   ├── state.py                Session state + persistence + signal handling
 │   ├── utils.py                Root check, logging, HMAC audit log
 │   ├── wep.py                  WEP attack pipeline
-│   ├── wordlist.py             12-strategy wordlist engine
+│   ├── wordlist.py             14-strategy wordlist engine (10 mutation families, QoL stats)
 │   └── wps.py                  WPS: Pixie-Dust / Vendor PIN spray / Full brute / Wash scan
 ├── data/
 │   ├── common_passwords.txt
