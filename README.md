@@ -25,6 +25,15 @@ Automated WiFi security auditing framework. Menu-driven, end-to-end pipeline:
 | **Smart Sequencer** | WPS-aware ranking: WPS unlocked → score 95, PMKID → 90, deauth → 75 |
 | **Full Auto Mode** | Scan → WPS probe → WPS path OR handshake path → wordlist → crack |
 | **Pentest Reports** | Markdown + JSON + HTML, SHA-256 evidence, HMAC-chained audit log |
+| **Phantom AP** | Rogue AP Signal Shadowing — beacon-identical clone, 3 personalities, vendor-matched captive portal |
+| **Signal Intercept** | Post-Phantom bettercap pipeline — live protocol fingerprinting with severity ratings |
+| **Beacon Historian** | Passive behavioral profiling — IE change detection, probe collection, stability score 0–100 |
+| **Neural Pathfinder** | OpenAI-powered structured attack planner — JSON output, privacy filter, rule-based fallback |
+| **Ghost Signal Tracker** | Parallel CVE queries (NVD + RouterSploit + Shodan) with 7-day SQLite cache |
+| **PRISM Dashboard** | Textual TUI — 3-panel live view (`--prism`), opt-in |
+| **Temporal Attack Engine** | Vendor PSK algorithm database — MAC/timestamp offline wordlist generation |
+| **PDF Report Engine** | reportlab primary / weasyprint fallback — 4-page report with NIST 800-153 checklist |
+| **Multi-language UI** | i18n with auto-detect: en, es, fr, ar, hi, zh (`--lang LANG`) |
 
 ---
 
@@ -59,9 +68,11 @@ The script auto-detects your OS and uses the correct package manager:
 After install, a Python venv is created at `~/.wifi-auditor/venv` and a launcher at `/usr/local/bin/wifi-auditor`.
 
 At the end of `install.sh`, the new `run_first_preflight()` function:
-1. Calls `_ensure_tool` for every optional/WPS binary (`reaver`, `wash`, `bully`, `cowpatty`, `hashcat`, `crunch`, `macchanger`) — installing any that are missing via the already-selected package manager.
-2. Sources the Python venv and runs `run_preflight_with_autofix()` (two-pass: show table → auto-install stragglers → re-show table).
-3. Writes the sentinel `~/.wifi-auditor/.preflight_done` (both from Python and from bash — belt-and-suspenders).
+1. Calls `_ensure_tool` for every optional/WPS binary (`reaver`, `wash`, `bully`, `cowpatty`, `hashcat`, `crunch`, `macchanger`) and gap-closer tools (`hostapd`, `dnsmasq`, `nginx`, `curl`) — installing any that are missing via the already-selected package manager.
+2. Installs `bettercap` via `_install_bettercap()` (apt on Kali/Parrot/Debian/Ubuntu, pacman on Arch; warns with install URL on unsupported distros).
+3. Installs leapfrog Python packages (`reportlab`, `textual`, `openai`, `httpx`) into the venv.
+4. Sources the Python venv and runs `run_preflight_with_autofix()` (two-pass: show table → auto-install stragglers → re-show table).
+5. Writes the sentinel `~/.wifi-auditor/.preflight_done` (both from Python and from bash — belt-and-suspenders).
 
 ### Manual
 
@@ -92,6 +103,9 @@ sudo ./install.sh
   └─ run_first_preflight()
        ├─ _ensure_tool reaver / wash / bully / cowpatty / ...
        │    └─ if missing → apt-get install -y <pkg>  (auto)
+       ├─ _ensure_tool hostapd / dnsmasq / nginx / curl
+       ├─ _install_bettercap()  (apt/pacman/warn)
+       ├─ pip install reportlab textual openai httpx
        ├─ source venv → run_preflight_with_autofix()
        │    ├─ Pass 1 : display full dependency table
        │    ├─ auto_install_missing() → installs anything still absent
@@ -185,6 +199,10 @@ diagnostics without affecting the auto-setup flow.
 | **wash** | opt | WPS AP discovery (ships with reaver package) |
 | **bully** | opt | WPS alternate backend |
 | **cowpatty** | opt | PMK-cache optimised cracking |
+| **hostapd** | opt | Phantom AP — rogue AP daemon |
+| **dnsmasq** | opt | Phantom AP — DNS/DHCP for captive portal |
+| **nginx** | opt | Phantom AP — reverse proxy for portal |
+| **bettercap** | opt | Signal Intercept — protocol fingerprinting pipeline |
 
 ### auto_install_missing()
 
@@ -434,6 +452,11 @@ wifi-auditor --auto                   Alias for --headless
 wifi-auditor --interface IFACE        Force specific wireless interface
 wifi-auditor --deauth-limit N         Max deauth bursts/min (default 5, max 20)
 wifi-auditor --report SESSION_ID      Generate Markdown + JSON pentest report
+wifi-auditor --pdf                    Also produce a PDF report (requires reportlab or weasyprint)
+wifi-auditor --prism                  Launch PRISM TUI dashboard (requires textual)
+wifi-auditor --no-tui                 Force plain-text output even if textual is installed
+wifi-auditor --lang LANG              UI language: en es fr ar hi zh
+wifi-auditor --neural-model MODEL     OpenAI model for Neural Pathfinder (default: gpt-4o-mini)
 wifi-auditor --verify-log             Verify HMAC-chained audit log integrity
 wifi-auditor --refresh-oui            Re-download IEEE OUI database
 wifi-auditor --debug                  Enable DEBUG logging to console
@@ -453,6 +476,12 @@ wifi-auditor --fast                   Lab/CTF mode: skip scope+consent (red warn
 [8]  Show session state
 [9]  Deauth attack
 [w]  WPS attack (Pixie-Dust / PIN spray / brute-force / wash scan)
+[p]  Phantom AP (Signal Shadowing — 3 personalities, captive portal)
+[I]  Signal Intercept (post-Phantom bettercap pipeline)
+[h]  Beacon Historian (passive behavioral profiling)
+[N]  Neural Pathfinder (OpenAI attack planner)
+[g]  Ghost Signal Tracker (CVE / RouterSploit / Shodan)
+[t]  Temporal Attack Engine (vendor PSK wordlist generation)
 [0]  Exit
 ```
 
@@ -614,6 +643,254 @@ Then two optional prompts:
 
 ---
 
+## Phantom AP — Signal Shadowing
+
+`modules/phantom.py` deploys a rogue access point that clones a target's beacon frame parameters identically (SSID, channel, beacon interval, IEs), making clients unable to distinguish it from the real AP.
+
+```bash
+# From interactive menu
+[p]  Phantom AP (Signal Shadowing)
+```
+
+### Personalities
+
+| # | Name | Behaviour |
+|---|---|---|
+| 1 | **Mirror** | Exact BSSID + SSID clone — clients auto-associate |
+| 2 | **Upgrade** | Same SSID, spoofed vendor upgrade BSSID — targets roaming clients |
+| 3 | **Stealth** | Random BSSID variant of SSID — low-attribution persistence |
+
+### Captive Portal
+
+The portal HTML is vendor-matched to the target OUI (TP-Link, Netgear, etc.). Credential capture is two-stage:
+- First submission → "Wrong password" (forces re-entry, higher confidence)
+- Second submission → connecting spinner → credentials saved to `~/.wifi-auditor/sessions/{id}_credentials.json`
+
+### Scope block
+
+Phantom AP **hard-blocks** all injection if the target BSSID is not in `scope.yaml`. The `--fast` flag is explicitly ignored for this module.
+
+### Dependencies
+
+Requires `hostapd` + `dnsmasq` (installed by `install.sh`). Configs are written to temp files and cleaned up on `Ctrl-C`.
+
+---
+
+## Signal Intercept
+
+`modules/intercept.py` hooks into the running Phantom AP session via bettercap's JSON event stream and fingerprints all observed protocols in real time.
+
+Must be launched after Phantom AP is active.
+
+### Severity ratings
+
+| Protocol | Severity |
+|---|---|
+| `telnet` | CRITICAL |
+| `ftp` | CRITICAL |
+| `smtp` | HIGH |
+| `http_cred` | HIGH |
+| `dns_query` | MEDIUM |
+| `http_host` | INFORMATIONAL |
+
+Findings are appended to `~/.wifi-auditor/sessions/{session_id}_findings.json` for use by the PDF Report Engine.
+
+---
+
+## Beacon Historian
+
+`modules/historian.py` passively profiles any visible access point without sending a single frame. No scope requirement.
+
+```bash
+# From interactive menu
+[h]  Beacon Historian
+```
+
+Collects beacon samples via `scapy` and computes:
+
+- **Stability score 0–100** — starts at 100, penalised by anomaly count (−15 each), RSSI variance (up to −40), and beacon interval variance (up to −20)
+- **IE change detection** — Information Element fingerprints compared via SHA-256; any change logged as anomaly
+- **Probe request collection** — nearby client MACs probing for the target SSID
+- **Behavioral profile** — duration, sample count, channel, vendor, SSID history
+
+---
+
+## Neural Pathfinder
+
+`modules/neural.py` sends sanitised scan results to the OpenAI API and receives a structured JSON attack plan — no free-text output allowed.
+
+```bash
+# From interactive menu
+[N]  Neural Pathfinder
+```
+
+### Privacy protection
+
+Before any data leaves the machine, `_sanitize_scan_data()`:
+- Truncates full BSSID to OUI prefix only (first 8 chars: `XX:XX:XX`)
+- Removes all `client_macs` entries
+- Keeps only signal strength, channel, encryption type
+
+### Configuration
+
+API key stored in `~/.wifi-auditor/neural.conf`:
+
+```
+[openai]
+api_key = sk-...
+```
+
+If the key is absent or the API call fails, the engine falls back to `_rule_based_brief()` — a local heuristic plan requiring no network access.
+
+### Consent gate
+
+Requires explicit consent prompt before any data is sent. Consent is not stored and must be given each session.
+
+### Model override
+
+```bash
+wifi-auditor --neural-model gpt-4o
+```
+
+Default: `gpt-4o-mini`.
+
+---
+
+## Ghost Signal Tracker
+
+`modules/ghost.py` runs parallel vulnerability queries against three sources and caches results locally for 7 days.
+
+```bash
+# From interactive menu
+[g]  Ghost Signal Tracker
+```
+
+### Sources
+
+| Source | Query |
+|---|---|
+| **NVD** (NIST) | CVE search by vendor keyword from OUI |
+| **RouterSploit index** | Module match by vendor/model string |
+| **Shodan InternetDB** | IP-based port/vuln lookup |
+
+Queries run in parallel via `asyncio.gather()`. A 7-day SQLite cache at `~/.wifi-auditor/ghost_cache.db` avoids redundant API calls. Cache key = SHA-256[:24] of `"source:query"`.
+
+---
+
+## PRISM Dashboard
+
+An opt-in Textual TUI that runs alongside the standard menu, providing a live 3-panel view of scan results, the session log, and active findings.
+
+```bash
+wifi-auditor --prism
+```
+
+### Layout
+
+```
+┌─────────────────────┬────────────────────┐
+│  Scan Results       │  Session Log       │
+│  (DataTable)        │  (Log panel)       │
+├─────────────────────┴────────────────────┤
+│  Active Findings (severity-coloured)     │
+└──────────────────────────────────────────┘
+```
+
+### Keybindings
+
+| Key | Action |
+|---|---|
+| `q` | Quit |
+| `r` | Force refresh |
+| `s` | Sort scan table by signal |
+
+Use `--no-tui` to force plain-text output even if `textual` is installed.
+
+---
+
+## Temporal Attack Engine
+
+`modules/temporal.py` generates offline wordlists using known vendor PSK derivation algorithms that depend only on the router's MAC address and/or first-seen timestamp.
+
+```bash
+# From interactive menu
+[t]  Temporal Attack Engine
+```
+
+### Vendor algorithm coverage
+
+9 algorithm implementations covering TP-Link, ZTE, Huawei, Arris/Surfboard, Belkin, Netgear, Vodafone, D-Link, and a generic base. Each function signature:
+
+```python
+fn(mac_bytes: bytes, ts: datetime) -> Iterator[str]
+```
+
+All output is filtered through `_filter_wpa()` — enforces WPA PSK constraints: 8–63 characters, printable ASCII only, no spaces.
+
+### Usage
+
+```
+[t] Temporal Attack Engine
+BSSID of target: AA:BB:CC:DD:EE:FF
+Vendor (leave blank for auto-detect): TP-Link
+Beacon timestamp (YYYY-MM-DD, leave blank to try all years): 2024-06-01
+Generating... 3,412 candidates → wordlists/temporal_AABBCC_20260609.txt
+```
+
+The generated file can be fed directly into any cracking backend.
+
+---
+
+## PDF Report Engine
+
+`modules/report_pdf.py` produces a professional 4-page PDF report from any completed session.
+
+```bash
+wifi-auditor --pdf                        # report for current session
+wifi-auditor --report SESSION_ID --pdf    # report for a past session
+```
+
+Output: `~/.wifi-auditor/reports/report_{session_id}.pdf`
+
+### Page structure
+
+| Page | Content |
+|---|---|
+| 1 | Cover — engagement title, date, auditor, scope summary |
+| 2 | Executive Summary — overall risk rating, key findings, recommendations |
+| 3 | Technical Findings — evidence table with SHA-256 hashes, protocol intercepts |
+| 4 | Remediation Checklist — NIST SP 800-153 control references per finding |
+
+### Engine fallback
+
+```
+try reportlab  →  OK → PDF generated
+               ↗  fail
+try weasyprint →  OK → PDF generated via HTML→PDF conversion
+               ↗  fail
+log warning: install reportlab or weasyprint
+```
+
+---
+
+## Multi-language Support
+
+The UI is fully internationalised. Language auto-detects from the system locale.
+
+```bash
+wifi-auditor --lang es    # Spanish
+wifi-auditor --lang fr    # French
+wifi-auditor --lang ar    # Arabic
+wifi-auditor --lang hi    # Hindi
+wifi-auditor --lang zh    # Chinese
+```
+
+Locale files live in `locale/{lang}.json`. Fallback chain: requested lang → `en.json` → raw key.
+
+Set `WIFI_AUDITOR_LANG=es` in your environment to make the language choice persistent.
+
+---
+
 ## Directory Structure
 
 ```
@@ -622,25 +899,33 @@ wifi-auditor/
 │   ├── __init__.py
 │   └── cli.py                  Full CLI (15 flags + [w] WPS menu key)
 ├── modules/
-│   ├── banner.py               Colors, display helpers, WPS menu entry
+│   ├── banner.py               Animated box-drawing banner, Colors, display helpers
 │   ├── cracker.py              4-backend cracker: aircrack/cowpatty/hashcat-dict/hashcat-rules
 │   ├── deauth.py               Deauth attack (scope + consent + rate limit + --fast support)
 │   ├── exceptions.py           Typed exception hierarchy
 │   ├── fingerprint.py          Passive 802.11 device fingerprinter (scapy)
+│   ├── ghost.py                Ghost Signal Tracker — NVD/RouterSploit/Shodan + SQLite cache
 │   ├── handshake.py            Passive / deauth / PMKID capture (+ --fast support)
+│   ├── historian.py            Beacon Historian — behavioral profiling, IE detection
+│   ├── i18n.py                 Internationalisation — t(), init(), active_lang()
+│   ├── intercept.py            Signal Intercept — bettercap event stream + severity ratings
 │   ├── logger.py               JSON-lines session logger
+│   ├── neural.py               Neural Pathfinder — OpenAI attack planner + privacy filter
 │   ├── oui.py                  IEEE OUI database + vendor defaults
 │   ├── pattern_engine.py       Token-based pattern expansion engine (Strategy 13 backend)
+│   ├── phantom.py              Phantom AP — hostapd/dnsmasq rogue AP + captive portal
 │   ├── pmkid.py                PMKID extraction + hashcat
-│   ├── preflight.py            Pre-flight system checker
+│   ├── preflight.py            Pre-flight system checker with interactive auto-installer
 │   ├── ratelimit.py            Token-bucket deauth rate limiter
 │   ├── report.py               Markdown + JSON pentest report generator
+│   ├── report_pdf.py           PDF Report Engine — reportlab primary / weasyprint fallback
 │   ├── reporter.py             HTML report (legacy)
 │   ├── runner.py               SubprocessRunner with retries + typed errors
 │   ├── scanner.py              airodump-ng + SSID entropy + WPA3 downgrade detection
 │   ├── scope.py                Scope enforcement + wizard
 │   ├── sequencer.py            Smart attack sequencer (WPS-aware scoring)
 │   ├── state.py                Session state + persistence + signal handling
+│   ├── temporal.py             Temporal Attack Engine — vendor PSK algorithms
 │   ├── utils.py                Root check, logging, HMAC audit log
 │   ├── wep.py                  WEP attack pipeline
 │   ├── wordlist.py             14-strategy wordlist engine (10 mutation families, QoL stats)
@@ -648,12 +933,26 @@ wifi-auditor/
 ├── data/
 │   ├── common_passwords.txt
 │   └── router_defaults.yaml    Vendor → default password mapping
+├── locale/
+│   ├── en.json                 English (base locale)
+│   ├── es.json                 Spanish
+│   ├── fr.json                 French
+│   ├── ar.json                 Arabic
+│   ├── hi.json                 Hindi
+│   └── zh.json                 Chinese
 ├── tests/
+│   ├── test_banner.py          Art rows, display helpers, Colors backward compat
+│   ├── test_ghost.py           GhostReport model, SQLite cache, NVD failure handling
+│   ├── test_historian.py       Profile construction, IE detection, probe dedup
 │   ├── test_hmac.py            HMAC chain tamper detection
+│   ├── test_i18n.py            Known key, fallback, interpolation, unknown lang
+│   ├── test_neural.py          Sanitize data (privacy), rule-based fallback, JSON parse
 │   ├── test_oui.py             OUI lookup (mock HTTP)
+│   ├── test_phantom.py         Scope block, config generation, portal HTML
 │   ├── test_preflight.py       Preflight logic (mock subprocess)
 │   ├── test_runner.py          SubprocessRunner timeout + retry
-│   └── test_scope.py           Scope enforcement
+│   ├── test_scope.py           Scope enforcement
+│   └── test_temporal.py        MAC parsing, algorithm selection, WPA filter, dedup
 ├── captures/                   Handshake .cap files
 ├── wordlists/                  Generated wordlists
 ├── results/                    Cracked keys + WPS results + reports
@@ -744,6 +1043,16 @@ Controlled via `--deauth-limit N` (default 5, max 20 bursts/min):
 **reaver "WPS transaction failed"** — AP may be rate-limiting WPS attempts. Use `--delay` (mode 3 prompts you) or wait for lockout to expire (5–60 min).
 
 **hashcat rule file not found** — Install `hashcat-rules` package or run `wifi-auditor` from a directory containing a `rules/` folder.
+
+**Phantom AP: "hostapd not found"** — Run `sudo apt-get install hostapd dnsmasq` or re-run `sudo ./install.sh`.
+
+**Signal Intercept: "bettercap not found"** — Install bettercap manually from `https://www.bettercap.org/installation/` then retry.
+
+**Neural Pathfinder: no API key** — Create `~/.wifi-auditor/neural.conf` with your OpenAI key (see Neural Pathfinder section). The rule-based fallback activates automatically without a key.
+
+**PDF report: "reportlab not installed"** — Run `pip install reportlab` inside the venv (`source ~/.wifi-auditor/venv/bin/activate`). Or install `weasyprint` as the fallback engine.
+
+**PRISM TUI blank screen** — Ensure `textual>=0.57.0` is installed. Try `--no-tui` to confirm the issue is textual-specific.
 
 **cowpatty "Collected all necessary data"** — SSID mismatch. Ensure the SSID in session state matches the one used during capture.
 
