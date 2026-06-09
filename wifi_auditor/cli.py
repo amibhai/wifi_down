@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-WiFi Auditor — CLI entry point.
+wifi_down — CLI entry point.
 
 Usage (interactive):
   sudo wifi-auditor
@@ -12,9 +12,13 @@ Usage (headless/automated):
 Special commands:
   wifi-auditor --preflight              Run pre-flight dependency checker
   wifi-auditor --scope-wizard           Interactive scope.yaml builder
-  wifi-auditor --report <session_id>    Generate pentest report from session
+  wifi-auditor --report SESSION_ID      Generate pentest report (Markdown + JSON)
+  wifi-auditor --report SESSION_ID --pdf  Generate PDF report alongside Markdown
   wifi-auditor --verify-log             Verify HMAC-chained audit log integrity
   wifi-auditor --refresh-oui            Re-download IEEE OUI database
+  wifi-auditor --prism                  Launch PRISM rich TUI (experimental)
+  wifi-auditor --lang LANG              Override UI language (en/es/fr/ar/hi/zh)
+  wifi-auditor --neural-model MODEL     Override OpenAI model (default: gpt-4o-mini)
 """
 from __future__ import annotations
 
@@ -26,7 +30,6 @@ import sys
 import time
 from pathlib import Path
 
-# Ensure project root is on path regardless of how we were invoked
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from modules.utils import (
@@ -48,24 +51,29 @@ from modules.preflight import run_preflight, run_preflight_with_autofix, SENTINE
 from modules.sequencer import AttackSequencer
 from modules.report import generate_report
 from modules.ratelimit import DEFAULT_MAX_BURSTS_PER_MIN
+from modules.i18n import init as i18n_init, t
 
 logger = logging.getLogger(__name__)
 
-# ─── Session state ───────────────────────────────────────────────────────────
+# ─── Session state ────────────────────────────────────────────────────────────
 
-state = {
+state: dict = {
     "interface":         None,
     "monitor_interface": None,
     "target":            None,
     "capture_file":      None,
     "wordlist_file":     None,
     "result":            None,
+    "scan_results":      [],        # last scan result list (for Neural Pathfinder)
+    "phantom_active":    False,     # set when Phantom AP is running
+    "session_id":        None,      # active session ID
 }
 
-_scope:    ScopeManager  = ScopeManager()
-_sm:       StateManager  = StateManager()
-_sequencer = AttackSequencer()
-_FAST_MODE: bool = False   # set via --fast; bypasses scope+consent for lab use
+_scope:     ScopeManager = ScopeManager()
+_sm:        StateManager  = StateManager()
+_sequencer  = AttackSequencer()
+_FAST_MODE: bool          = False
+_NEURAL_MODEL: str        = "gpt-4o-mini"
 
 
 def _cleanup() -> None:
@@ -77,19 +85,11 @@ def _cleanup() -> None:
 
 
 def _check_first_run() -> None:
-    """
-    If the pre-flight sentinel has never been written, this is the first launch
-    after a fresh install (or a manual pip install without install.sh).
-    Run the preflight checker + auto-install automatically, then write the sentinel
-    so subsequent starts are fast.
-    """
     if SENTINEL_FILE.exists():
         return
-
     warn("First launch detected — running pre-flight check and auto-install...")
     warn("This only happens once. Future starts will skip this step.")
     print()
-
     try:
         run_preflight_with_autofix()
     except Exception as exc:
@@ -104,7 +104,7 @@ def _check_first_run() -> None:
 def action_set_interface() -> None:
     interfaces = get_wireless_interfaces()
     if not interfaces:
-        error("No wireless interfaces found. Check your adapter.")
+        error(t("error.no_interface"))
         return
 
     print(f"\n  {C.CYAN}Available Wireless Interfaces:{C.RESET}")
@@ -137,7 +137,7 @@ def action_set_interface() -> None:
 
 def action_scan() -> None:
     if not state["monitor_interface"]:
-        error("Set interface first (Option 1).")
+        error(t("error.no_interface"))
         return
     try:
         secs = int(input(f"  {C.YELLOW}Scan duration [20]: {C.RESET}").strip() or "20")
@@ -146,6 +146,8 @@ def action_scan() -> None:
 
     _sm.transition(Stage.SCANNING)
     networks = scan_networks(state["monitor_interface"], secs)
+    state["scan_results"] = networks
+
     if not networks:
         warn("No networks discovered.")
         return
@@ -159,8 +161,6 @@ def action_scan() -> None:
             target_ssid=target.get("ssid", ""),
             channel=target.get("channel"),
         )
-
-        # ── WPS capability probe ──────────────────────────────────────────
         info("Probing WPS capability (6 s wash scan)...")
         wps = detect_wps_capability(
             state["monitor_interface"],
@@ -176,25 +176,20 @@ def action_scan() -> None:
             success(f"WPS{ver_tag} detected on {target['bssid']}{lock_tag}")
         else:
             info("WPS not detected — will use handshake/PMKID path.")
-
-        # Show smart attack plan (now WPS-aware)
         _sequencer.score_target(target)
 
 
 def action_capture() -> None:
     if not state["monitor_interface"]:
-        error("Set interface first (Option 1).")
+        error(t("error.no_interface"))
         return
     if not state["target"]:
-        error("Scan and select a target first (Option 2).")
+        error(t("error.no_target"))
         return
-
     _sm.transition(Stage.CAPTURING)
     cap = capture_handshake_menu(
-        state["monitor_interface"],
-        state["target"],
-        scope=_scope,
-        fast=_FAST_MODE,
+        state["monitor_interface"], state["target"],
+        scope=_scope, fast=_FAST_MODE,
     )
     if cap:
         state["capture_file"] = cap
@@ -203,8 +198,6 @@ def action_capture() -> None:
 
 def action_wordlist() -> None:
     ssid  = state["target"]["ssid"]  if state["target"] else None
-    bssid = state["target"]["bssid"] if state["target"] else None
-
     _sm.transition(Stage.WORDLIST)
     wl = wordlist_menu(ssid)
     if wl:
@@ -214,10 +207,10 @@ def action_wordlist() -> None:
 
 def action_crack() -> None:
     if not state["capture_file"]:
-        error("Capture a handshake first (Option 3).")
+        error(t("error.no_capture"))
         return
     if not state["wordlist_file"]:
-        error("Generate a wordlist first (Option 4).")
+        error(t("error.no_wordlist"))
         return
     _sm.transition(Stage.CRACKING)
     ssid = state["target"].get("ssid", "") if state.get("target") else ""
@@ -226,20 +219,15 @@ def action_crack() -> None:
 
 def action_wps() -> None:
     if not state["monitor_interface"]:
-        error("Set interface first (Option 1).")
+        error(t("error.no_interface"))
         return
-    wps_menu(
-        state["monitor_interface"],
-        state.get("target"),
-        scope=_scope,
-        fast=_FAST_MODE,
-    )
+    wps_menu(state["monitor_interface"], state.get("target"),
+             scope=_scope, fast=_FAST_MODE)
 
 
 def action_full_auto() -> None:
     print(f"\n  {C.BOLD}{C.CYAN}═══ FULL AUTO MODE ═══{C.RESET}\n")
 
-    # ── Step 1: Interface ─────────────────────────────────────────────────────
     if not state["monitor_interface"]:
         info("Step 1: Setting up interface...")
         action_set_interface()
@@ -249,7 +237,6 @@ def action_full_auto() -> None:
     else:
         success(f"Step 1: Interface → {state['monitor_interface']}")
 
-    # ── Step 2: Scan + target selection ──────────────────────────────────────
     info("Step 2: Scanning for networks...")
     try:
         secs = int(input(f"  {C.YELLOW}Scan seconds [20]: {C.RESET}").strip() or "20")
@@ -257,6 +244,7 @@ def action_full_auto() -> None:
         secs = 20
 
     networks = scan_networks(state["monitor_interface"], secs)
+    state["scan_results"] = networks
     if not networks:
         error("No networks found.")
         return
@@ -265,38 +253,24 @@ def action_full_auto() -> None:
         return
     state["target"] = target
 
-    # ── Step 3: WPS detection (one-time probe, decides the path) ─────────────
     info("Step 3: Probing WPS capability (6 s)...")
     wps = detect_wps_capability(
-        state["monitor_interface"],
-        target["bssid"],
-        target.get("channel", 6),
+        state["monitor_interface"], target["bssid"], target.get("channel", 6)
     )
     target["wps_enabled"] = wps["enabled"]
     target["wps_locked"]  = wps["locked"]
     target["wps_version"] = wps["version"]
+    _sequencer.score_target(target)
 
-    _sequencer.score_target(target)   # display WPS-aware attack plan
-
-    # ── Branch: WPS path ─────────────────────────────────────────────────────
     if wps["enabled"] and not wps["locked"]:
         ver_tag = f" v{wps['version']}" if wps["version"] else ""
         success(f"WPS{ver_tag} enabled and unlocked → taking WPS attack path")
-        info("Running Pixie-Dust first (fastest); PIN spray as fallback.")
-        wps_menu(
-            state["monitor_interface"],
-            target,
-            scope=_scope,
-            fast=_FAST_MODE,
-        )
-        # If WPS gave us a result the user can read it from results/; done.
+        wps_menu(state["monitor_interface"], target, scope=_scope, fast=_FAST_MODE)
         return
 
     if wps["enabled"] and wps["locked"]:
-        ver_tag = f" v{wps['version']}" if wps["version"] else ""
-        warn(f"WPS{ver_tag} detected but AP-Lock is set — falling back to handshake path.")
+        warn(f"WPS detected but AP-Lock is set — falling back to handshake path.")
 
-    # ── Branch: Handshake path ────────────────────────────────────────────────
     info("Step 4: Capturing handshake...")
     cap = capture_handshake_menu(
         state["monitor_interface"], target, auto=True, scope=_scope, fast=_FAST_MODE
@@ -319,10 +293,10 @@ def action_full_auto() -> None:
 
 def action_wep() -> None:
     if not state["monitor_interface"]:
-        error("Set interface first (Option 1).")
+        error(t("error.no_interface"))
         return
     if not state["target"]:
-        error("Scan and select a target first (Option 2).")
+        error(t("error.no_target"))
         return
     enc = state["target"].get("privacy", "")
     if "WEP" not in enc.upper():
@@ -336,13 +310,70 @@ def action_wep() -> None:
 
 def action_deauth() -> None:
     if not state["monitor_interface"]:
-        error("Set interface first (Option 1).")
+        error(t("error.no_interface"))
         return
-    deauth_menu(
-        state["monitor_interface"],
-        state.get("target"),
+    deauth_menu(state["monitor_interface"], state.get("target"),
+                scope=_scope, fast=_FAST_MODE)
+
+
+def action_ghost() -> None:
+    """Ghost Signal Tracker — CVE + firmware intelligence."""
+    from modules.ghost import ghost_menu
+    ghost_menu(state.get("target"))
+
+
+def action_neural() -> None:
+    """Neural Pathfinder — AI-powered attack brief."""
+    from modules.neural import neural_menu
+    if not state.get("scan_results"):
+        warn("No scan results yet. Running a scan first is recommended.")
+    neural_menu(state.get("scan_results") or [], openai_model=_NEURAL_MODEL)
+
+
+def action_historian() -> None:
+    """Beacon Historian — passive AP behavioral profiling."""
+    from modules.historian import historian_menu
+    if not state["monitor_interface"]:
+        error(t("error.no_interface"))
+        return
+    historian_menu(state["monitor_interface"], state.get("target"))
+
+
+def action_phantom() -> None:
+    """Phantom AP — Signal Shadowing rogue access point."""
+    from modules.phantom import phantom_menu
+    if not state["monitor_interface"]:
+        error(t("error.no_interface"))
+        return
+    phantom_menu(
+        interface=state["monitor_interface"],
+        target=state.get("target"),
         scope=_scope,
         fast=_FAST_MODE,
+    )
+    state["phantom_active"] = True
+
+
+def action_temporal() -> None:
+    """Temporal Attack Engine — time-based PSK prediction."""
+    from modules.temporal import temporal_menu
+    wl = temporal_menu(target=state.get("target"))
+    if wl:
+        state["wordlist_file"] = str(wl)
+        info(f"Temporal wordlist set as active wordlist: {wl}")
+
+
+def action_intercept() -> None:
+    """Signal Intercept — post-Phantom AP protocol fingerprinting."""
+    from modules.intercept import intercept_menu
+    if not state["monitor_interface"]:
+        error(t("error.no_interface"))
+        return
+    sid = _sm.state.session_id if hasattr(_sm, "state") else "unknown"
+    intercept_menu(
+        interface=state["monitor_interface"],
+        session_id=sid,
+        phantom_active=state.get("phantom_active", False),
     )
 
 
@@ -355,18 +386,39 @@ def action_show_state() -> None:
         "capture_file":      "Capture file",
         "wordlist_file":     "Wordlist",
         "result":            "Cracked key",
+        "phantom_active":    "Phantom AP active",
     }
     for k, label in labels.items():
-        v = state[k]
+        v = state.get(k)
         if k == "target" and isinstance(v, dict):
             v = f"{v.get('ssid')}  [{v.get('bssid')}]  CH{v.get('channel')}"
         colour = C.GREEN if v else C.DIM
-        print(f"    {label:<20} : {colour}{v or 'not set'}{C.RESET}")
+        print(f"    {label:<22} : {colour}{v or 'not set'}{C.RESET}")
     print()
 
 
+def action_report(session_id: str, generate_pdf: bool = False) -> None:
+    """Generate Markdown + optional PDF report."""
+    from modules.report import generate_report as gen_md
+    try:
+        md, js = gen_md(session_id)
+        print(f"  {C.GREEN}[+]{C.RESET} Markdown: {md}")
+        print(f"  {C.GREEN}[+]{C.RESET} Findings: {js}")
+    except FileNotFoundError as exc:
+        error(str(exc))
+        return
+
+    if generate_pdf:
+        from modules.report_pdf import generate_pdf_report
+        pdf = generate_pdf_report(session_id)
+        if pdf:
+            print(f"  {C.GREEN}[+]{C.RESET} PDF report: {pdf}")
+        else:
+            warn("PDF engine unavailable. Install reportlab or weasyprint.")
+
+
 ###############################################################################
-# Headless / fully automated mode
+# Headless / automated mode
 ###############################################################################
 
 def run_headless(
@@ -375,11 +427,6 @@ def run_headless(
     iface: str = "",
     deauth_limit: int = DEFAULT_MAX_BURSTS_PER_MIN,
 ) -> int:
-    """
-    Fully non-interactive audit pipeline.
-    Requires scope file. Logs everything. Suitable for scheduled runs.
-    Returns 0 on key found, 1 on failure.
-    """
     from modules.utils import setup_logging
     setup_logging()
 
@@ -393,7 +440,6 @@ def run_headless(
     sm = StateManager()
     t_start = time.monotonic()
 
-    # Interface
     if not iface:
         ifaces = get_wireless_interfaces()
         if not ifaces:
@@ -408,7 +454,6 @@ def run_headless(
         return 1
     sm.transition(Stage.INTERFACE, interface=iface, monitor_interface=mon)
 
-    # Scan
     logger.info("Scanning for target %s ...", target_bssid)
     sm.transition(Stage.SCANNING)
     networks = scan_networks(mon, duration=20)
@@ -421,11 +466,8 @@ def run_headless(
         return 1
 
     sm.transition(Stage.SCANNING, target_bssid=target_bssid, target_ssid=target.get("ssid", ""))
-
-    # Show attack plan
     _sequencer.score_target(target)
 
-    # Capture
     logger.info("Capturing handshake for %s ...", target_bssid)
     sm.transition(Stage.CAPTURING)
     cap = capture_handshake_menu(mon, target, auto=True, scope=scope, deauth_limit=deauth_limit)
@@ -436,7 +478,6 @@ def run_headless(
         return 1
     sm.transition(Stage.CAPTURING, capture_file=cap)
 
-    # Wordlist
     logger.info("Generating wordlist ...")
     sm.transition(Stage.WORDLIST)
     wl = wordlist_menu(target.get("ssid", ""), auto=True)
@@ -446,7 +487,6 @@ def run_headless(
         return 1
     sm.transition(Stage.WORDLIST, wordlist_file=wl)
 
-    # Crack
     logger.info("Cracking ...")
     sm.transition(Stage.CRACKING)
     cracker_menu(cap, wl)
@@ -467,13 +507,93 @@ def run_headless(
 
 
 ###############################################################################
+# PRISM TUI (Leapfrog 3) — launched via --prism
+###############################################################################
+
+def launch_prism() -> None:
+    """Launch the PRISM rich TUI interface (opt-in, requires textual)."""
+    try:
+        from textual.app import App, ComposeResult
+        from textual.widgets import Header, Footer, Static, DataTable, Log
+        from textual.containers import Horizontal, Vertical
+    except ImportError:
+        error("PRISM TUI requires textual. Install: pip install textual")
+        info("Falling back to standard menu. Use --no-tui to suppress this message.")
+        return
+
+    from rich.text import Text
+    import textwrap
+
+    class PRISMApp(App):
+        CSS = textwrap.dedent("""
+            Screen { background: #0d0d0d; }
+            Header { background: #001a14; color: #00D4AA; }
+            Footer { background: #001a14; color: #00D4AA; }
+            #left  { width: 30%; border: solid #00D4AA; padding: 1; }
+            #center{ width: 50%; border: solid #00D4AA; padding: 1; }
+            #right { width: 20%; border: solid #00D4AA; padding: 1; }
+            .title { color: #00D4AA; text-style: bold; }
+            DataTable { height: 100%; }
+        """)
+
+        BINDINGS = [
+            ("s", "scan",      t("menu.scan")),
+            ("w", "wps",       t("menu.wps")),
+            ("h", "handshake", t("menu.handshake")),
+            ("c", "crack",     t("menu.crack")),
+            ("p", "phantom",   t("menu.phantom")),
+            ("g", "ghost",     t("menu.ghost")),
+            ("n", "neural",    t("menu.neural")),
+            ("r", "report",    t("menu.report")),
+            ("?", "help",      "Help"),
+            ("q", "quit",      t("menu.exit")),
+        ]
+
+        def compose(self) -> ComposeResult:
+            yield Header()
+            with Horizontal():
+                with Vertical(id="left"):
+                    yield Static("[bold #00D4AA]TARGET LIST[/bold #00D4AA]", classes="title")
+                    yield DataTable(id="target_table")
+                with Vertical(id="center"):
+                    yield Static("[bold #00D4AA]ACTIVE OPERATION[/bold #00D4AA]", classes="title")
+                    yield Log(id="operation_log", auto_scroll=True)
+                with Vertical(id="right"):
+                    yield Static("[bold #00D4AA]SESSION INTEL[/bold #00D4AA]", classes="title")
+                    yield Static(id="intel_panel")
+            yield Footer()
+
+        def on_mount(self) -> None:
+            t_table = self.query_one("#target_table", DataTable)
+            t_table.add_columns("SSID", "BSSID", "Sec", "CH", "GHOST")
+            for net in state.get("scan_results", []):
+                t_table.add_row(
+                    net.get("ssid", "–"),
+                    net.get("bssid", "–"),
+                    net.get("privacy", "–"),
+                    str(net.get("channel", "–")),
+                    "❓",
+                )
+
+        def action_quit(self) -> None:
+            self.exit()
+
+    try:
+        app = PRISMApp(title="wifi_down — PRISM")
+        app.run()
+    except Exception as exc:
+        error(f"PRISM TUI error: {exc}")
+        logger.exception("PRISM TUI error")
+
+
+###############################################################################
 # Argument parser
 ###############################################################################
 
 def _build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(
         prog="wifi-auditor",
-        description="WiFi Security Auditing Framework — authorized use only",
+        description="wifi_down — WiFi Security Auditing Framework — authorized use only",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
@@ -483,22 +603,46 @@ Examples:
   sudo wifi-auditor --headless --scope scope.yaml \\
        --target AA:BB:CC:DD:EE:FF --auto             # headless scan
   wifi-auditor --report 20260604_120000               # generate report
+  wifi-auditor --report 20260604_120000 --pdf         # report + PDF
   wifi-auditor --verify-log                           # verify audit log
+  sudo wifi-auditor --prism                           # PRISM TUI (experimental)
 """,
     )
-    p.add_argument("--preflight",    action="store_true", help="Run pre-flight checker and exit")
-    p.add_argument("--scope-wizard", action="store_true", help="Run interactive scope.yaml wizard")
-    p.add_argument("--scope",        metavar="FILE",      help="Path to scope.yaml (default: ./scope.yaml)")
-    p.add_argument("--headless",     action="store_true", help="Non-interactive automated mode")
-    p.add_argument("--target",       metavar="BSSID",     help="Target BSSID for headless mode")
-    p.add_argument("--auto",         action="store_true", help="Alias for --headless")
-    p.add_argument("--interface",    metavar="IFACE",     help="Wireless interface for headless mode")
+    p.add_argument("--preflight",    action="store_true",
+                   help="Run pre-flight checker and exit")
+    p.add_argument("--scope-wizard", action="store_true",
+                   help="Run interactive scope.yaml wizard")
+    p.add_argument("--scope",        metavar="FILE",
+                   help="Path to scope.yaml (default: ./scope.yaml)")
+    p.add_argument("--headless",     action="store_true",
+                   help="Non-interactive automated mode")
+    p.add_argument("--target",       metavar="BSSID",
+                   help="Target BSSID for headless mode")
+    p.add_argument("--auto",         action="store_true",
+                   help="Alias for --headless")
+    p.add_argument("--interface",    metavar="IFACE",
+                   help="Wireless interface for headless mode")
     p.add_argument("--deauth-limit", type=int, default=DEFAULT_MAX_BURSTS_PER_MIN,
-                   metavar="N",      help=f"Max deauth bursts/min (default {DEFAULT_MAX_BURSTS_PER_MIN}, max 20)")
-    p.add_argument("--report",       metavar="SESSION_ID", help="Generate pentest report for session")
-    p.add_argument("--verify-log",   action="store_true", help="Verify HMAC-chained audit log")
-    p.add_argument("--refresh-oui",  action="store_true", help="Re-download IEEE OUI database")
-    p.add_argument("--debug",        action="store_true", help="Enable DEBUG logging")
+                   metavar="N",
+                   help=f"Max deauth bursts/min (default {DEFAULT_MAX_BURSTS_PER_MIN}, max 20)")
+    p.add_argument("--report",       metavar="SESSION_ID",
+                   help="Generate pentest report for session")
+    p.add_argument("--pdf",          action="store_true",
+                   help="Include PDF output with --report")
+    p.add_argument("--verify-log",   action="store_true",
+                   help="Verify HMAC-chained audit log")
+    p.add_argument("--refresh-oui",  action="store_true",
+                   help="Re-download IEEE OUI database")
+    p.add_argument("--prism",        action="store_true",
+                   help="Launch PRISM rich TUI interface (requires textual)")
+    p.add_argument("--no-tui",       action="store_true",
+                   help="Force classic text menu even if --prism was set")
+    p.add_argument("--lang",         metavar="LANG",
+                   help="UI language override (en/es/fr/ar/hi/zh)")
+    p.add_argument("--neural-model", metavar="MODEL", default="gpt-4o-mini",
+                   help="OpenAI model for Neural Pathfinder (default: gpt-4o-mini)")
+    p.add_argument("--debug",        action="store_true",
+                   help="Enable DEBUG logging")
     p.add_argument(
         "--fast",
         action="store_true",
@@ -526,22 +670,40 @@ ACTIONS = {
     "9": action_deauth,
     "w": action_wps,
     "W": action_wps,
+    "g": action_ghost,
+    "G": action_ghost,
+    "N": action_neural,
+    "h": action_historian,
+    "H": action_historian,
+    "p": action_phantom,
+    "P": action_phantom,
+    "t": action_temporal,
+    "T": action_temporal,
+    "I": action_intercept,
+    "r": lambda: action_report(
+        _sm.state.session_id if hasattr(_sm, "state") else "unknown"
+    ),
 }
 
 
 def main() -> None:
-    global _scope, _FAST_MODE
+    global _scope, _FAST_MODE, _NEURAL_MODEL
 
     parser = _build_parser()
     args   = parser.parse_args()
 
+    # ── i18n init ──────────────────────────────────────────────────────────────
+    i18n_init(args.lang if args.lang else None)
+
     log_level = logging.DEBUG if args.debug else logging.INFO
     setup_logging(log_level)
+
+    _NEURAL_MODEL = args.neural_model
 
     if getattr(args, "fast", False):
         _FAST_MODE = True
         from rich.console import Console
-        from rich import box
+        from rich import box as rbox
         from rich.panel import Panel
         Console().print(Panel(
             "[bold red]⚡  FAST / LAB MODE  ⚡[/]\n\n"
@@ -549,7 +711,7 @@ def main() -> None:
             "[bold yellow]Only use this on networks you own or have written authorization to test.[/]\n"
             "Unauthorized use is illegal under CFAA / CMA / IT Act 2000.",
             title="[bold red]Warning — Reduced Safeguards[/]",
-            box=box.DOUBLE,
+            box=rbox.DOUBLE,
             border_style="red",
         ))
         logger.warning("FAST_MODE enabled — scope/consent bypassed")
@@ -573,9 +735,7 @@ def main() -> None:
         return
 
     if args.report:
-        md, js = generate_report(args.report)
-        print(f"Report:   {md}")
-        print(f"Findings: {js}")
+        action_report(args.report, generate_pdf=args.pdf)
         return
 
     # ── Load scope file ───────────────────────────────────────────────────────
@@ -607,7 +767,6 @@ def main() -> None:
             parser.error("--headless requires --target BSSID")
         if not scope_path.exists():
             parser.error("--headless requires a valid --scope file")
-
         check_root()
         sys.exit(run_headless(
             scope_file=str(scope_path),
@@ -616,11 +775,24 @@ def main() -> None:
             deauth_limit=args.deauth_limit,
         ))
 
+    # ── PRISM TUI (opt-in) ────────────────────────────────────────────────────
+    if args.prism and not args.no_tui:
+        check_root()
+        _check_first_run()
+        check_dependencies()
+        launch_prism()
+        return
+
     # ── Interactive menu ──────────────────────────────────────────────────────
     check_root()
-    _check_first_run()   # auto-preflight on very first launch (no-op after that)
+    _check_first_run()
     check_dependencies()
-    print_banner()
+    scope_label = str(scope_path) if scope_path.exists() else None
+    print_banner(
+        interface=state.get("monitor_interface") or "not set",
+        targets=len(state.get("scan_results") or []),
+        scope_file=scope_label,
+    )
 
     import signal
     signal.signal(signal.SIGINT,  lambda s, f: (_cleanup(), sys.exit(0)))
