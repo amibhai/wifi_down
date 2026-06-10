@@ -35,7 +35,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 from modules.utils import (
     check_root, check_dependencies, setup_logging,
     get_wireless_interfaces, enable_monitor_mode, disable_monitor_mode,
-    kill_interfering_processes, verify_audit_log, emit_session_summary,
+    verify_audit_log, emit_session_summary,
 )
 from modules.banner import C, print_banner, print_menu, info, success, warn, error
 from modules.scanner import scan_networks, select_network
@@ -84,6 +84,54 @@ def _cleanup() -> None:
             pass
 
 
+def _action_check_interface() -> None:
+    """Print a full diagnostic of wireless interface status."""
+    import shutil
+    import subprocess as _sp
+    from rich.console import Console as _Con
+    from modules.interface import (
+        get_wireless_interfaces as _get_managed,
+        get_monitor_interfaces as _get_mon,
+    )
+    con = _Con()
+
+    con.print("\n[bold cyan]━━━ wifi_down interface diagnostic ━━━[/]")
+
+    iw_out = _sp.run(["iw", "dev"], capture_output=True, text=True)
+    con.print("\n[bold cyan]◈ System interfaces (iw dev):[/]")
+    con.print(iw_out.stdout.strip() or "(no output)")
+
+    managed = _get_managed()
+    con.print(f"\n[bold cyan]◈ Managed wireless interfaces:[/] {managed or 'none'}")
+
+    mon = _get_mon()
+    con.print(f"[bold cyan]◈ Monitor interfaces:[/] {mon or 'none'}")
+
+    airmon_check = _sp.run(["airmon-ng", "check"], capture_output=True, text=True)
+    con.print("\n[bold cyan]◈ Interfering processes (airmon-ng check):[/]")
+    con.print(airmon_check.stdout.strip() or "(none)")
+
+    airmon_avail = bool(shutil.which("airmon-ng"))
+    con.print(
+        f"\n[bold cyan]◈ airmon-ng available:[/] "
+        f"{'[green]yes[/]' if airmon_avail else '[red]no — install aircrack-ng[/]'}"
+    )
+
+    is_root = os.geteuid() == 0
+    con.print(
+        f"[bold cyan]◈ Running as root:[/] "
+        f"{'[green]yes[/]' if is_root else '[red]no — run: sudo wifi-auditor[/]'}"
+    )
+
+    if managed:
+        con.print(f"\n[bold cyan]◈ Recommended interface:[/] [bold]{managed[0]}[/]")
+    elif mon:
+        con.print(f"\n[bold cyan]◈ Active monitor interface:[/] [bold]{mon[0]}[/]")
+    else:
+        con.print("\n[bold red]◈ No wireless interfaces found.[/]")
+    con.print()
+
+
 def _check_first_run() -> None:
     if SENTINEL_FILE.exists():
         return
@@ -125,14 +173,13 @@ def action_set_interface() -> None:
     state["interface"] = iface
     _sm.transition(Stage.INTERFACE, interface=iface)
 
-    kill_interfering_processes()
-    mon = enable_monitor_mode(iface)
-    if mon:
+    try:
+        mon = enable_monitor_mode(iface)
         state["monitor_interface"] = mon
         _sm.transition(Stage.INTERFACE, monitor_interface=mon)
         success(f"Ready on {mon}")
-    else:
-        error("Could not enable monitor mode.")
+    except RuntimeError as exc:
+        error(str(exc))
 
 
 def action_scan() -> None:
@@ -447,10 +494,10 @@ def run_headless(
             return 1
         iface = ifaces[0]
 
-    kill_interfering_processes()
-    mon = enable_monitor_mode(iface)
-    if not mon:
-        logger.error("Could not enable monitor mode on %s", iface)
+    try:
+        mon = enable_monitor_mode(iface)
+    except RuntimeError as exc:
+        logger.error("Could not enable monitor mode on %s: %s", iface, exc)
         return 1
     sm.transition(Stage.INTERFACE, interface=iface, monitor_interface=mon)
 
@@ -641,6 +688,8 @@ Examples:
                    help="UI language override (en/es/fr/ar/hi/zh)")
     p.add_argument("--neural-model", metavar="MODEL", default="gpt-4o-mini",
                    help="OpenAI model for Neural Pathfinder (default: gpt-4o-mini)")
+    p.add_argument("--check-interface", action="store_true",
+                   help="Diagnose wireless interface and monitor mode status, then exit")
     p.add_argument("--debug",        action="store_true",
                    help="Enable DEBUG logging")
     p.add_argument(
@@ -736,6 +785,10 @@ def main() -> None:
 
     if args.report:
         action_report(args.report, generate_pdf=args.pdf)
+        return
+
+    if getattr(args, "check_interface", False):
+        _action_check_interface()
         return
 
     # ── Load scope file ───────────────────────────────────────────────────────
