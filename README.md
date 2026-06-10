@@ -47,6 +47,16 @@ sudo wifi-auditor --preflight   # verify everything is ready
 sudo wifi-auditor          # launch interactive menu
 ```
 
+> [!NOTE]
+> **Terminal requirements for the animated banner:**
+> - **Width ≥ 90 columns** — narrower terminals show a compact fallback (no animation, no ASCII art).
+> - **UTF-8 locale** (`LANG=en_US.UTF-8` or equivalent) — required for box-drawing characters and
+>   the `अमी` credit. Kali/Parrot ship UTF-8 by default. Windows cp1252 terminals show `Ami`.
+> - **256-colour support** — the banner uses `color(N)` ANSI 256-colour codes. Most modern terminal
+>   emulators (kitty, alacritty, GNOME Terminal, iTerm2) support this automatically.
+> - Run `echo $TERM` and confirm it shows `xterm-256color` or similar; if not, export it before
+>   launching.
+
 ---
 
 ## Installation
