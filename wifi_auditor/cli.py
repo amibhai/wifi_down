@@ -39,7 +39,7 @@ from modules.utils import (
 )
 from modules.banner import C, print_banner, print_menu, info, success, warn, error
 from modules.scanner import scan_networks, select_network
-from modules.handshake import capture_handshake_menu
+from modules.handshake import capture_handshake
 from modules.wordlist import wordlist_menu
 from modules.cracker import cracker_menu
 from modules.wep import wep_crack_menu
@@ -234,9 +234,11 @@ def action_capture() -> None:
         error(t("error.no_target"))
         return
     _sm.transition(Stage.CAPTURING)
-    cap = capture_handshake_menu(
-        state["monitor_interface"], state["target"],
-        scope=_scope, fast=_FAST_MODE,
+    cap = capture_handshake(
+        bssid=state["target"]["bssid"],
+        ssid=state["target"]["ssid"],
+        channel=state["target"]["channel"],
+        monitor_interface=state["monitor_interface"],
     )
     if cap:
         state["capture_file"] = cap
@@ -319,8 +321,11 @@ def action_full_auto() -> None:
         warn(f"WPS detected but AP-Lock is set — falling back to handshake path.")
 
     info("Step 4: Capturing handshake...")
-    cap = capture_handshake_menu(
-        state["monitor_interface"], target, auto=True, scope=_scope, fast=_FAST_MODE
+    cap = capture_handshake(
+        bssid=target["bssid"],
+        ssid=target["ssid"],
+        channel=target["channel"],
+        monitor_interface=state["monitor_interface"],
     )
     if not cap:
         error("Handshake capture failed.")
@@ -517,7 +522,12 @@ def run_headless(
 
     logger.info("Capturing handshake for %s ...", target_bssid)
     sm.transition(Stage.CAPTURING)
-    cap = capture_handshake_menu(mon, target, auto=True, scope=scope, deauth_limit=deauth_limit)
+    cap = capture_handshake(
+        bssid=target["bssid"],
+        ssid=target.get("ssid", target["bssid"]),
+        channel=target["channel"],
+        monitor_interface=mon,
+    )
     if not cap:
         logger.error("Handshake capture failed")
         disable_monitor_mode(mon)

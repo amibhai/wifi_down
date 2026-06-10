@@ -20,7 +20,7 @@ from modules.banner import C, print_banner, print_menu, info, success, warn, err
 from modules.utils  import check_root, check_dependencies, get_wireless_interfaces, \
                            enable_monitor_mode, disable_monitor_mode, kill_interfering_processes
 from modules.scanner    import scan_networks, display_networks, select_network
-from modules.handshake  import capture_handshake_menu
+from modules.handshake  import capture_handshake
 from modules.wordlist   import wordlist_menu
 from modules.cracker    import cracker_menu
 from modules.wep        import wep_crack_menu
@@ -120,7 +120,12 @@ def action_capture():
         error("Scan and select a target first (Option 2).")
         return
 
-    cap = capture_handshake_menu(state['monitor_interface'], state['target'])
+    cap = capture_handshake(
+        bssid=state['target']['bssid'],
+        ssid=state['target']['ssid'],
+        channel=state['target']['channel'],
+        monitor_interface=state['monitor_interface'],
+    )
     if cap:
         state['capture_file'] = cap
 
@@ -173,7 +178,12 @@ def action_full_auto():
 
     # Step 3: Capture
     info("Step 3/5: Capturing handshake...")
-    cap = capture_handshake_menu(state['monitor_interface'], state['target'], auto=True)
+    cap = capture_handshake(
+        bssid=state['target']['bssid'],
+        ssid=state['target']['ssid'],
+        channel=state['target']['channel'],
+        monitor_interface=state['monitor_interface'],
+    )
     if not cap:
         error("Handshake capture failed.")
         return
