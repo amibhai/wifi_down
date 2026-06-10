@@ -5,6 +5,52 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [0.4.3] — 2026-06-10
+
+### Changed
+
+- `modules/handshake.py` — full rewrite of the Strategy 2 deauth pipeline:
+  - **`discover_clients(bssid, monitor_interface, scan_duration, channel)`**
+    Runs `airodump-ng` for N seconds, parses the Station section of the CSV,
+    returns clients sorted strongest-signal-first.  Exact BSSID match on
+    `row[5]` — no false positives from nearby APs.  Rich Live countdown.
+  - **`display_clients(clients, bssid)`**
+    Rich table with colour-coded signal strength (green>-50, yellow>-70, red).
+  - **`send_targeted_deauth(bssid, client_mac, monitor_interface, limiter, count=8)`**
+    Sends in both directions using the per-client rate-limiter key:
+    - Dir 1: `aireplay-ng -0 8 -a <AP> -c <client>` — spoofed as AP
+    - Dir 2: `aireplay-ng -0 8 -a <client> -c <AP>` — spoofed as client;
+      forces the AP to drop the client from its association table so the
+      client must do a full 4-way handshake on reconnect regardless of PMF.
+  - **`send_broadcast_deauth_fallback()`** — kept as fallback for the
+    no-clients-found case (16 packets, rate-limited).
+  - **`_deauth_capture()` — rewired pipeline:**
+    1. Start `airodump-ng` passive capture in background (runs throughout)
+    2. Spawn PMKID thread in parallel (daemon, up to 60 s)
+    3. Per attempt: discover clients → targeted deauth per client →
+       check after each → wait for reassociation → repeat
+    4. Falls back to broadcast if zero clients found
+    5. Attempt budget: `max(3, timeout // 28)` — 120 s → 4 attempts
+    6. `dump_proc.wait(timeout=5)` with `kill()` fallback (was bare `.wait()`)
+    7. SHA-256 of cap file printed on success as audit evidence
+  - **`verify_handshake(cap_file, bssid)`** — new public wrapper around
+    `_verify_handshake` for callers outside the module.
+  - **`_verify_handshake()`** — passes `-b <bssid>` to `aircrack-ng` for
+    accurate per-AP detection; adds PMKID match; removes brittle line scan.
+  - **`_pmkid_capture()`** — hardened: `mkstemp` temp file, BSSID lowercase,
+    `--disable_deauthentication` flag, proc kill fallback, 100-byte min size,
+    `.hc22000` extension, `hcxpcapngtool` wrapped in `try/except + timeout`.
+  - Removed `_send_deauth()` helper (superseded by `send_targeted_deauth`).
+
+- `modules/ratelimit.py` — per-client bucket keying:
+  - `DeauthRateLimiter._key(bssid, client_mac=None)` — static method
+    returning `"BSSID:CLIENT"` for targeted deauth, `"BSSID"` for broadcast.
+  - `check_burst()`, `wait_for_burst()`, `get_stats()` accept optional
+    `client_mac` param.  All existing broadcast callers hit the `None`
+    default — no behaviour change for broadcast paths.
+
+---
+
 ## [0.4.2] — 2026-06-10
 
 ### Fixed
