@@ -198,17 +198,12 @@ def _print_art() -> None:
 
 
 def _print_made_by() -> None:
-    """Centered 'made by Ami' printed char-by-char at 0.04 s/char."""
+    """Left-aligned 'made by Ami' printed char-by-char at 0.04 s/char."""
     parts = [
         ("── made by ", "color(240) italic"),
         ("Ami",         "color(213) bold"),
         (" ──",         "color(240) italic"),
     ]
-    full    = "".join(p[0] for p in parts)
-    width   = console.width
-    padding = max(0, (width - len(full)) // 2)
-    sys.stdout.write(" " * padding)
-    sys.stdout.flush()
 
     for text, style_str in parts:
         esc = _ansi(style_str)
