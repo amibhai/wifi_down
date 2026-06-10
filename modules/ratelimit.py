@@ -53,12 +53,18 @@ class TokenBucket:
 
 class DeauthRateLimiter:
     """
-    Per-BSSID token buckets + a global frames-per-second hard cap.
+    Per-target token buckets + a global frames-per-second hard cap.
+
+    Bucket keys are "{BSSID}" for broadcast deauth and "{BSSID}:{CLIENT_MAC}"
+    for targeted unicast deauth, so hammering one client does not consume
+    tokens for other clients on the same AP.
 
     Usage:
         limiter = DeauthRateLimiter(max_bursts_per_min=5)
-        # Before each burst:
+        # Broadcast burst:
         limiter.wait_for_burst(bssid)
+        # Targeted burst (per-client key):
+        limiter.wait_for_burst(bssid, client_mac)
         # Before each individual frame:
         if not limiter.record_frame():
             time.sleep(0.1)   # global cap hit
@@ -73,13 +79,20 @@ class DeauthRateLimiter:
         self._window_start    = time.monotonic()
         self._lock            = threading.Lock()
 
-    def check_burst(self, bssid: str) -> bool:
-        """Non-blocking: returns True if a burst is allowed right now."""
-        return self._buckets[bssid.upper()].consume()
+    @staticmethod
+    def _key(bssid: str, client_mac: str | None = None) -> str:
+        """Return the bucket key: per-client when client_mac provided, else per-BSSID."""
+        if client_mac and client_mac.upper() not in ("FF:FF:FF:FF:FF:FF", ""):
+            return f"{bssid.upper()}:{client_mac.upper()}"
+        return bssid.upper()
 
-    def wait_for_burst(self, bssid: str) -> None:
-        """Block until a burst token is available for *bssid*."""
-        self._buckets[bssid.upper()].wait_for_token()
+    def check_burst(self, bssid: str, client_mac: str | None = None) -> bool:
+        """Non-blocking: returns True if a burst is allowed right now."""
+        return self._buckets[self._key(bssid, client_mac)].consume()
+
+    def wait_for_burst(self, bssid: str, client_mac: str | None = None) -> None:
+        """Block until a burst token is available for the target key."""
+        self._buckets[self._key(bssid, client_mac)].wait_for_token()
 
     def record_frame(self) -> bool:
         """
@@ -96,11 +109,13 @@ class DeauthRateLimiter:
             self._global_frames += 1
             return True
 
-    def get_stats(self, bssid: str) -> dict:
-        bssid = bssid.upper()
-        bucket = self._buckets[bssid]
+    def get_stats(self, bssid: str, client_mac: str | None = None) -> dict:
+        key    = self._key(bssid, client_mac)
+        bucket = self._buckets[key]
         return {
-            "bssid":              bssid,
+            "bssid":              bssid.upper(),
+            "client_mac":         client_mac.upper() if client_mac else None,
+            "bucket_key":         key,
             "tokens_remaining":   bucket.available,
             "capacity":           int(bucket.capacity),
             "max_bursts_per_min": self._max_bursts,
