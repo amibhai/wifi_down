@@ -37,8 +37,7 @@ C = Colors
 _con = Console()
 
 # ─── Color palette ────────────────────────────────────────────────────────────
-_TEAL     = "#00D4AA"
-_DIM_CYAN = "dim cyan"
+_TEAL = "#00D4AA"
 
 # ─── Block letter art: 5 rows × fixed width using box-drawing characters ──────
 _LETTERS: dict[str, list[str]] = {
@@ -146,14 +145,14 @@ def print_banner(
             # Glow line before art
             for ch in (glow + "\n"):
                 displayed += ch
-                live.update(Text(displayed, style=Style(color=_DIM_CYAN)))
+                live.update(Text(displayed, style=Style(color="cyan", dim=True)))
                 time.sleep(0.003)
             # Main art in teal
             art_displayed = displayed
             for ch in art_text:
                 art_displayed += ch
                 live.update(
-                    Text(displayed, style=Style(color=_DIM_CYAN))
+                    Text(displayed, style=Style(color="cyan", dim=True))
                     + Text(art_displayed[len(displayed):], style=Style(color=_TEAL, bold=True))
                 )
                 time.sleep(0.003)
@@ -161,12 +160,12 @@ def print_banner(
             # Glow line after art
             for ch in ("\n" + glow):
                 displayed += ch
-                live.update(Text(displayed, style=Style(color=_DIM_CYAN)))
+                live.update(Text(displayed, style=Style(color="cyan", dim=True)))
                 time.sleep(0.003)
     else:
-        _con.print(glow, style=_DIM_CYAN)
+        _con.print(glow, style="dim cyan")
         _con.print(art_text, style=Style(color=_TEAL, bold=True))
-        _con.print(glow, style=_DIM_CYAN)
+        _con.print(glow, style="dim cyan")
 
     _con.print()
     _con.print("  [dim]made by Ami[/dim]")
