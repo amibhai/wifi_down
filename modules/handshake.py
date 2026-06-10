@@ -4,18 +4,20 @@ Handshake capture module.
 
 Strategies:
   1. Passive – wait for a natural 4-way handshake (scope warning only)
-  2. Deauth  – send deauth frames to force a reconnect (scope REQUIRED)
-  3. PMKID   – capture PMKID from AP beacon (scope REQUIRED)
+  2. Deauth  – targeted per-client deauth + broadcast fallback (scope REQUIRED)
+  3. PMKID   – capture PMKID from AP (scope REQUIRED)
 
 Ethical safeguards
 ──────────────────
 • Scope check   : deauth and PMKID require the BSSID to be listed in scope.yaml
 • Consent prompt: user must type the BSSID before any frame is sent
-• Rate limiter  : deauth bursts limited to DEFAULT_MAX_BURSTS_PER_MIN
+• Rate limiter  : deauth bursts limited to DEFAULT_MAX_BURSTS_PER_MIN per client
 • Audit log     : every deauth burst logged with timestamp + user
 """
 from __future__ import annotations
 
+import csv
+import hashlib
 import logging
 import os
 import re
@@ -25,6 +27,7 @@ import tempfile
 import threading
 import time
 from datetime import datetime
+from io import StringIO
 from pathlib import Path
 from typing import Optional
 
@@ -35,13 +38,12 @@ from modules.scope import ScopeManager
 logger = logging.getLogger(__name__)
 
 HANDSHAKE_TIMEOUT_DEFAULT = 120
-DEAUTH_COUNT              = 10
+DEAUTH_COUNT              = 8       # per-direction, per-client
 DEAUTH_INTERVAL           = 5
 CAPTURE_DIR               = "captures"
 
 os.makedirs(CAPTURE_DIR, exist_ok=True)
 
-# Per-session rate limiter instance (reset on new session via CLI)
 _rate_limiter: Optional[DeauthRateLimiter] = None
 
 
@@ -223,8 +225,173 @@ def _passive_capture(interface, bssid, channel, cap_base, timeout) -> Optional[s
 
 
 ###############################################################################
-# Strategy 2: Deauth + capture
+# Strategy 2: Targeted deauth + capture
 ###############################################################################
+
+def discover_clients(
+    bssid: str,
+    monitor_interface: str,
+    scan_duration: int = 10,
+    channel: Optional[int] = None,
+) -> list[dict]:
+    """
+    Passively sniff for clients associated with *bssid* via airodump-ng CSV.
+
+    Returns list of dicts sorted by signal strength (strongest first):
+      [{"mac": "AA:BB:CC:DD:EE:FF", "power": -45, "packets": 134, "probes": "net"}]
+    """
+    from rich.console import Console
+    from rich.live import Live
+    from rich.text import Text
+    con = Console()
+
+    tmpdir = tempfile.mkdtemp(prefix="wifidown_clients_")
+    output_prefix = os.path.join(tmpdir, "clients")
+
+    cmd = [
+        "airodump-ng",
+        "--bssid", bssid,
+        "--output-format", "csv",
+        "--write", output_prefix,
+        "--write-interval", "2",
+    ]
+    if channel:
+        cmd += ["--channel", str(channel)]
+    cmd.append(monitor_interface)
+
+    con.print(
+        f"[dim cyan]◈ Scanning for connected clients on {bssid} ({scan_duration}s)...[/]"
+    )
+
+    proc = subprocess.Popen(
+        cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL
+    )
+
+    try:
+        with Live(console=con, refresh_per_second=4) as live:
+            for remaining in range(scan_duration, 0, -1):
+                live.update(
+                    Text(
+                        f"  ◈ Sniffing clients... {remaining}s remaining",
+                        style="dim cyan",
+                    )
+                )
+                time.sleep(1)
+    finally:
+        proc.terminate()
+        try:
+            proc.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            proc.kill()
+
+    clients: list[dict] = []
+    csv_file = output_prefix + "-01.csv"
+
+    if not os.path.exists(csv_file):
+        shutil.rmtree(tmpdir, ignore_errors=True)
+        return clients
+
+    try:
+        with open(csv_file, "r", encoding="utf-8", errors="ignore") as f:
+            content = f.read()
+
+        # airodump-ng CSV: Section 1 = APs, Section 2 = Stations
+        sections = re.split(r"\n\s*\n", content)
+        client_section: Optional[str] = None
+        for section in sections:
+            if "Station MAC" in section:
+                client_section = section
+                break
+
+        if client_section:
+            reader = csv.reader(StringIO(client_section))
+            header_found = False
+            for row in reader:
+                row = [cell.strip() for cell in row]
+                if not row:
+                    continue
+                if "Station MAC" in row[0]:
+                    header_found = True
+                    continue
+                if not header_found or len(row) < 6:
+                    continue
+
+                client_mac = row[0].strip().upper()
+                if not re.match(r"^([0-9A-F]{2}:){5}[0-9A-F]{2}$", client_mac):
+                    continue
+
+                assoc_bssid = row[5].strip().upper() if len(row) > 5 else ""
+                if assoc_bssid in ("", "(NOT ASSOCIATED)"):
+                    continue
+                if assoc_bssid != bssid.strip().upper():
+                    continue
+
+                try:
+                    power = int(row[3].strip()) if row[3].strip() else -100
+                except ValueError:
+                    power = -100
+                try:
+                    packets = int(row[4].strip()) if row[4].strip() else 0
+                except ValueError:
+                    packets = 0
+
+                clients.append({
+                    "mac":     client_mac,
+                    "power":   power,
+                    "packets": packets,
+                    "probes":  row[6].strip() if len(row) > 6 else "",
+                })
+
+    except Exception as exc:
+        logger.debug("Client CSV parse error: %s", exc)
+    finally:
+        shutil.rmtree(tmpdir, ignore_errors=True)
+
+    clients.sort(key=lambda c: c["power"], reverse=True)
+    return clients
+
+
+def display_clients(clients: list[dict], bssid: str) -> None:
+    """Print a Rich table of discovered clients."""
+    from rich.console import Console
+    from rich.table import Table
+    from rich.text import Text
+    con = Console()
+
+    if not clients:
+        con.print(f"[yellow]  No clients currently associated with {bssid}[/]")
+        return
+
+    table = Table(
+        title=f"Connected clients on {bssid}",
+        border_style="color(23)",
+        header_style="color(51) bold",
+        show_lines=False,
+    )
+    table.add_column("No.", style="dim", width=4)
+    table.add_column("Client MAC", style="color(87) bold")
+    table.add_column("Signal", style="color(50)")
+    table.add_column("Packets", style="dim cyan")
+    table.add_column("Probes", style="dim")
+
+    for i, client in enumerate(clients, 1):
+        signal_str = f"{client['power']} dBm"
+        signal_style = (
+            "green" if client["power"] > -50
+            else "yellow" if client["power"] > -70
+            else "red"
+        )
+        table.add_row(
+            str(i),
+            client["mac"],
+            Text(signal_str, style=signal_style),
+            str(client["packets"]),
+            client["probes"] or "—",
+        )
+
+    con.print(table)
+
+
 
 def _deauth_capture(
     interface, bssid, channel, cap_base, timeout, auto, limiter: DeauthRateLimiter
