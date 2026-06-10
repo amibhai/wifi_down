@@ -198,26 +198,13 @@ def _print_art() -> None:
 
 
 def _print_made_by() -> None:
-    """Centered 'made by अमी' printed char-by-char at 0.04 s/char."""
-    parts_normal = [
-        ("── made by ",  "color(240) italic"),
-        ("अमी",          "color(213) bold"),
-        (" ──",          "color(240) italic"),
+    """Centered 'made by Ami' printed char-by-char at 0.04 s/char."""
+    parts = [
+        ("── made by ", "color(240) italic"),
+        ("Ami",         "color(213) bold"),
+        (" ──",         "color(240) italic"),
     ]
-    parts_fallback = [
-        ("── made by ",  "color(240) italic"),
-        ("Ami",          "color(213) bold"),
-        (" ──",          "color(240) italic"),
-    ]
-
-    try:
-        full = "".join(p[0] for p in parts_normal)
-        full.encode("utf-8")
-        parts = parts_normal
-    except (UnicodeEncodeError, UnicodeDecodeError):
-        full  = "".join(p[0] for p in parts_fallback)
-        parts = parts_fallback
-
+    full    = "".join(p[0] for p in parts)
     width   = console.width
     padding = max(0, (width - len(full)) // 2)
     sys.stdout.write(" " * padding)
