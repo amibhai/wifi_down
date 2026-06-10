@@ -90,6 +90,11 @@ class ScopeManager:
         return dict(self._targets)
 
 
+def check_scope(bssid: str) -> None:
+    """Hard scope check: raise ScopeError if bssid is not in scope.yaml."""
+    ScopeManager().require_authorized(bssid, "handshake capture")
+
+
 # ─── Scope wizard ─────────────────────────────────────────────────────────────
 
 def scope_wizard() -> None:

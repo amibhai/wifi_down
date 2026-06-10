@@ -36,6 +36,7 @@ class SessionState:
     target_ssid: Optional[str] = None
     channel: Optional[int] = None
     capture_file: Optional[str] = None
+    handshake_file: Optional[str] = None
     wordlist_file: Optional[str] = None
     result: Optional[str] = None
     stage: Stage = Stage.INIT
