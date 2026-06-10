@@ -116,7 +116,7 @@ def capture_handshake_menu(
         # Deauth: hard scope block (or fast-mode warning)
         _enforce_scope_and_consent(scope, bssid, ssid, "Deauth + Handshake Capture", fast=fast)
         limiter = get_rate_limiter(deauth_limit)
-        return _deauth_capture(interface, bssid, channel, cap_base, timeout, auto, limiter)
+        return _deauth_capture(interface, bssid, ssid, channel, cap_base, timeout, auto, limiter)
 
     elif strategy == "3":
         # PMKID: hard scope block (or fast-mode warning)
@@ -624,51 +624,71 @@ def _deauth_capture(
 # Strategy 3: PMKID
 ###############################################################################
 
-def _pmkid_capture(interface, bssid, cap_base, timeout) -> Optional[str]:
+def _pmkid_capture(interface: str, bssid: str, cap_base: str, timeout: int) -> Optional[str]:
     if not shutil.which("hcxdumptool"):
-        error("hcxdumptool not found. Install it: sudo apt install hcxdumptool")
+        logger.debug("hcxdumptool not found -- PMKID capture skipped")
         return None
 
     pcapng_file = cap_base + "_pmkid.pcapng"
-    hash_file   = cap_base + "_pmkid.hash"
+    hash_file   = cap_base + "_pmkid.hc22000"
 
-    info(f"Capturing PMKID from {bssid} for {timeout}s...")
-    filter_file = tempfile.NamedTemporaryFile(
-        mode="w", suffix=".txt", delete=False
-    )
-    filter_file.write(bssid.replace(":", "") + "\n")
-    filter_file.close()
-
-    proc = subprocess.Popen(
-        ["hcxdumptool", "-i", interface, "-o", pcapng_file,
-         "--filterlist_ap=" + filter_file.name, "--filtermode=2", "--enable_status=1"],
-        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-    )
+    filter_fd, filter_path = tempfile.mkstemp(suffix=".txt", prefix="wifidown_pmkid_")
     try:
-        time.sleep(timeout)
-    except KeyboardInterrupt:
-        warn("PMKID capture interrupted.")
+        with os.fdopen(filter_fd, "w") as f:
+            f.write(bssid.replace(":", "").lower() + "\n")
+
+        proc = subprocess.Popen(
+            [
+                "hcxdumptool",
+                "-i", interface,
+                "-o", pcapng_file,
+                f"--filterlist_ap={filter_path}",
+                "--filtermode=2",
+                "--disable_deauthentication",
+            ],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
+        try:
+            time.sleep(timeout)
+        except Exception:
+            pass
+        finally:
+            proc.terminate()
+            try:
+                proc.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                proc.kill()
     finally:
-        proc.terminate()
-        proc.wait()
+        try:
+            os.unlink(filter_path)
+        except OSError:
+            pass
 
-    os.unlink(filter_file.name)
-
-    if not os.path.exists(pcapng_file) or os.path.getsize(pcapng_file) == 0:
-        error("No PMKID data captured.")
+    if not os.path.exists(pcapng_file) or os.path.getsize(pcapng_file) < 100:
         return None
 
-    info("Converting PMKID to hashcat format...")
-    subprocess.run(
-        ["hcxpcapngtool", "-o", hash_file, pcapng_file],
-        capture_output=True, text=True,
-    )
+    try:
+        subprocess.run(
+            ["hcxpcapngtool", "-o", hash_file, pcapng_file],
+            capture_output=True, text=True, timeout=30,
+        )
+        if os.path.exists(hash_file) and os.path.getsize(hash_file) > 0:
+            logger.info("PMKID captured: %s", hash_file)
+            return hash_file
+    except Exception as exc:
+        logger.debug("PMKID conversion error: %s", exc)
 
-    if os.path.exists(hash_file) and os.path.getsize(hash_file) > 0:
-        success(f"PMKID hash saved: {hash_file}")
-        return hash_file + ":pmkid"
-    error("PMKID extraction failed.")
     return None
+
+
+###############################################################################
+# Handshake verification (public + internal)
+###############################################################################
+
+def verify_handshake(cap_file: str, bssid: str) -> bool:
+    """Public wrapper: returns True if cap_file contains a valid 4-way handshake."""
+    return _verify_handshake(cap_file, bssid)
 
 
 ###############################################################################
@@ -677,10 +697,17 @@ def _pmkid_capture(interface, bssid, cap_base, timeout) -> Optional[str]:
 
 def _start_airodump(interface, bssid, channel, cap_base) -> subprocess.Popen:
     return subprocess.Popen(
-        ["airodump-ng", "--bssid", bssid, "--channel", str(channel),
-         "--write", cap_base, "--output-format", "cap,csv",
-         "--write-interval", "2", interface],
-        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+        [
+            "airodump-ng",
+            "--bssid", bssid,
+            "--channel", str(channel),
+            "--write", cap_base,
+            "--output-format", "cap,csv",
+            "--write-interval", "2",
+            interface,
+        ],
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
     )
 
 
@@ -705,28 +732,22 @@ def _run_airodump_until_handshake(interface, bssid, channel, cap_base, timeout) 
     return _finalize(cap_file, handshake_found)
 
 
-def _send_deauth(interface, bssid, client_mac, count) -> None:
-    subprocess.run(
-        ["aireplay-ng", "--deauth", str(count), "-a", bssid, "-c", client_mac, interface],
-        capture_output=True,
-    )
-
-
 def _verify_handshake(cap_file: str, bssid: str) -> bool:
+    """Check cap_file for a valid WPA handshake for bssid using aircrack-ng."""
     if not os.path.exists(cap_file) or os.path.getsize(cap_file) == 0:
         return False
     try:
         result = subprocess.run(
-            ["aircrack-ng", cap_file], capture_output=True, text=True, timeout=15
+            ["aircrack-ng", "-b", bssid, cap_file],
+            capture_output=True, text=True, timeout=15,
         )
         output = result.stdout + result.stderr
         if re.search(r"WPA\s*\(\s*[1-9]\d*\s*handshake", output, re.IGNORECASE):
             return True
-        for line in output.splitlines():
-            if bssid.upper() in line.upper():
-                m = re.search(r"WPA.*?(\d+)\s+handshake", line, re.IGNORECASE)
-                if m and int(m.group(1)) > 0:
-                    return True
+        if re.search(r"[1-9]\d*\s+handshake", output, re.IGNORECASE):
+            return True
+        if "PMKID" in output:
+            return True
     except Exception:
         pass
     return False
