@@ -91,8 +91,19 @@ class ScopeManager:
 
 
 def check_scope(bssid: str) -> None:
-    """Hard scope check: raise ScopeError if bssid is not in scope.yaml."""
-    ScopeManager().require_authorized(bssid, "handshake capture")
+    """
+    Scope check with graduated enforcement:
+      - No scope.yaml present  → warn and continue (file not required)
+      - File present, BSSID missing → hard ScopeError (explicit deny)
+    """
+    mgr = ScopeManager()
+    if not mgr._targets:
+        console.print(
+            "[yellow]  ⚠ No scope.yaml found — proceeding without scope check.\n"
+            "  Run [bold]wifi-auditor --scope-wizard[/] to create one.[/]"
+        )
+        return
+    mgr.require_authorized(bssid, "handshake capture")
 
 
 # ─── Scope wizard ─────────────────────────────────────────────────────────────
