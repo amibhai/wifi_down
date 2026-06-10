@@ -37,7 +37,7 @@ from modules.utils import (
     get_wireless_interfaces, enable_monitor_mode, disable_monitor_mode,
     verify_audit_log, emit_session_summary,
 )
-from modules.banner import C, print_banner, print_menu, info, success, warn, error
+from modules.banner import C, print_banner, print_compact_header, print_menu, info, success, warn, error
 from modules.scanner import scan_networks, select_network
 from modules.handshake import capture_handshake
 from modules.wordlist import wordlist_menu
@@ -242,7 +242,7 @@ def action_capture() -> None:
     )
     if cap:
         state["capture_file"] = cap
-        _sm.transition(Stage.CAPTURING, capture_file=cap)
+        _sm.transition(Stage.CAPTURING, capture_file=cap, handshake_file=cap)
 
 
 def action_wordlist() -> None:
@@ -331,6 +331,7 @@ def action_full_auto() -> None:
         error("Handshake capture failed.")
         return
     state["capture_file"] = cap
+    _sm.transition(Stage.CAPTURING, capture_file=cap, handshake_file=cap)
 
     info("Step 5: Generating wordlist...")
     wl = wordlist_menu(target["ssid"], auto=True)
@@ -533,7 +534,7 @@ def run_headless(
         disable_monitor_mode(mon)
         sm.transition(Stage.FAILED)
         return 1
-    sm.transition(Stage.CAPTURING, capture_file=cap)
+    sm.transition(Stage.CAPTURING, capture_file=cap, handshake_file=cap)
 
     logger.info("Generating wordlist ...")
     sm.transition(Stage.WORDLIST)
@@ -863,6 +864,7 @@ def main() -> None:
 
     while True:
         try:
+            print_compact_header(interface=state.get("monitor_interface"))
             print_menu(state)
             choice = input(f"\n  {C.YELLOW}[>] {C.RESET}").strip()
 

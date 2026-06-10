@@ -9,12 +9,15 @@ import os
 import random
 import shutil
 import subprocess
+import sys
+import textwrap
 import time
 from datetime import datetime
 from typing import Optional
 
 from rich.console import Console
 from rich.live import Live
+from rich.panel import Panel
 from rich.style import Style
 from rich.text import Text
 
@@ -63,6 +66,50 @@ _TAGLINES = [
     "trust nothing. verify everything.",
     "you cannot defend what you cannot see.",
     "signal found. identity unknown.",
+]
+
+# ─── made by अमी — large ASCII art (fallback when pyfiglet unavailable) ────────
+
+MADE_BY_ART = [
+    "███╗   ███╗ █████╗ ██████╗ ███████╗    ██████╗ ██╗   ██╗",
+    "████╗ ████║██╔══██╗██╔══██╗██╔════╝    ██╔══██╗╚██╗ ██╔╝",
+    "██╔████╔██║███████║██║  ██║█████╗      ██████╔╝ ╚████╔╝ ",
+    "██║╚██╔╝██║██╔══██║██║  ██║██╔══╝      ██╔══██╗  ╚██╔╝  ",
+    "██║ ╚═╝ ██║██║  ██║██████╔╝███████╗    ██████╔╝   ██║   ",
+    "╚═╝     ╚═╝╚═╝  ╚═╝╚═════╝ ╚══════╝    ╚═════╝    ╚═╝   ",
+]
+
+# ─── Hacker quotes ────────────────────────────────────────────────────────────
+
+QUOTES = [
+    ("Kevin Mitnick",
+     "The human side of computer security is easily exploited "
+     "and we still don't take it seriously enough."),
+    ("Bruce Schneier",
+     "Security is not a product, but a process."),
+    ("Kevin Mitnick",
+     "Companies spend millions of dollars on firewalls, "
+     "encryption and secure access devices, and it's money wasted "
+     "because none of these measures address the weakest link "
+     "in the security chain: the people who use, administer, "
+     "and operate computer systems."),
+    ("Dan Kaminsky",
+     "We keep saying the internet isn't a safe place. "
+     "But we built it as if it was."),
+    ("Mikko Hyppönen",
+     "If it's smart, it's vulnerable."),
+    ("Richard Stallman",
+     "Sharing is good, and with digital technology, sharing is easy."),
+    ("Edward Snowden",
+     "Arguing that you don't care about privacy because you have nothing "
+     "to hide is no different from saying you don't care about free speech "
+     "because you have nothing to say."),
+    ("Anonymous",
+     "We are legion. We do not forgive. We do not forget. Expect us."),
+    ("Linus Torvalds",
+     "Software is like sex: it's better when it's free."),
+    ("Bruce Schneier",
+     "Amateurs hack systems, professionals hack people."),
 ]
 
 _S_OUTER   = Style(color="color(23)", dim=True)
@@ -310,6 +357,163 @@ def _compact_banner() -> None:
     c2.append("            │", style=_S_OUTER)
     console.print(c2)
     console.print("└─────────────────────────┘", style=_S_OUTER)
+
+
+def _print_made_by_art() -> None:
+    """Print the large 'MADE BY अमी' section centered."""
+    _S_ART_L = Style(color="color(213)", bold=True)
+    _S_ART_R = Style(color="color(219)", bold=True)
+    _S_DECO  = Style(color="color(213)", dim=True)
+    _S_PRE   = Style(color="color(240)", italic=True)
+    _S_DEVA  = Style(color="color(213)", bold=True)
+
+    deco = "···················· ✦ ····················"
+    console.print(deco, justify="center", style=_S_DECO)
+    console.print()
+    console.print("made by", justify="center", style=_S_PRE)
+    console.print()
+
+    for row in MADE_BY_ART:
+        n    = len(row)
+        half = n // 2
+        t    = Text()
+        t.append(row[:half], style=_S_ART_L)
+        t.append(row[half:], style=_S_ART_R)
+        console.print(t, justify="center")
+
+    console.print()
+
+    try:
+        devanagari = "  ॐ  अ मी  ॐ  "
+        devanagari.encode(console.encoding or "utf-8")
+        console.print(devanagari, justify="center", style=_S_DEVA)
+    except (UnicodeEncodeError, LookupError):
+        console.print("  Ami  ", justify="center", style=_S_DEVA)
+
+    console.print()
+    console.print(deco, justify="center", style=_S_DECO)
+    console.print()
+
+
+def _print_quotes(num: int = 3) -> None:
+    """Print N random hacker quotes, animated char by char."""
+    selected = random.sample(QUOTES, min(num, len(QUOTES)))
+    _ANSI_ITALIC_252 = "\033[3;38;5;252m"
+    _ANSI_RESET      = "\033[0m"
+
+    for i, (author, quote) in enumerate(selected):
+        if i > 0:
+            console.print("    " + "─" * 42, style=Style(color="color(238)", dim=True))
+            console.print()
+
+        # Wrap quote text and animate char by char
+        lines = textwrap.wrap(quote, width=68)
+        for j, line in enumerate(lines):
+            prefix = "    ❝ " if j == 0 else "      "
+            suffix = " ❞" if j == len(lines) - 1 else ""
+            try:
+                sys.stdout.write(f"{_ANSI_ITALIC_252}{prefix}")
+                sys.stdout.flush()
+                for ch in line + suffix:
+                    sys.stdout.write(ch)
+                    sys.stdout.flush()
+                    time.sleep(0.005)
+                sys.stdout.write(f"{_ANSI_RESET}\n")
+                sys.stdout.flush()
+            except (UnicodeEncodeError, OSError):
+                print(f"{prefix}{line}{suffix}")
+
+        # Author line (non-animated, Rich styled)
+        console.print(
+            f"        — {author}",
+            style=Style(color="color(51)", bold=True)
+        )
+        console.print()
+
+
+def _print_disclaimer() -> None:
+    """Print the legal disclaimer in a red-bordered panel."""
+    from rich.text import Text as RText
+
+    body = RText()
+    body.append("\n  wifi_down", style=Style(color="color(252)"))
+    body.append(
+        " is a professional security auditing framework\n"
+        "  intended for authorized testing ",
+        style=Style(color="color(252)")
+    )
+    body.append("ONLY", style=Style(color="color(196)", bold=True))
+    body.append(".\n\n", style=Style(color="color(252)"))
+
+    bullets = [
+        "Use ONLY on networks you own or have WRITTEN permission to test.",
+        ("Unauthorized access is a criminal offence under CFAA,\n"
+         "    UK Computer Misuse Act, India IT Act 2000, and similar\n"
+         "    laws worldwide."),
+        "The authors accept NO liability for misuse.",
+        "All activities are logged with HMAC-chained audit trail.",
+    ]
+    for b in bullets:
+        body.append("  • ", style=Style(color="color(214)"))
+        body.append(b + "\n", style=Style(color="color(252)"))
+
+    body.append("\n", style=Style(color="color(252)"))
+
+    console.print(Panel(
+        body,
+        title="[bold color(196)]LEGAL NOTICE[/]",
+        border_style="color(196)",
+        padding=(0, 2),
+    ))
+    console.print()
+
+
+def _pulsing_enter_prompt() -> None:
+    """Pulse the Enter prompt 3 times then wait for the user to press Enter."""
+    _COLORS = [
+        "\033[1;38;5;51m",
+        "\033[1;38;5;87m",
+        "\033[1;38;5;123m",
+        "\033[1;38;5;87m",
+        "\033[1;38;5;51m",
+    ]
+    _RESET  = "\033[0m"
+    prompt  = "[ Press ENTER to continue ]"
+    pad     = "  "
+
+    # Pulse 3 cycles
+    for _ in range(3):
+        for color in _COLORS:
+            try:
+                sys.stdout.write(f"\r{pad}{color}{prompt}{_RESET}   ")
+                sys.stdout.flush()
+            except (UnicodeEncodeError, OSError):
+                pass
+            time.sleep(0.15)
+
+    # Show final static prompt and wait
+    try:
+        sys.stdout.write(f"\r{pad}\033[1;38;5;51m{prompt}\033[0m   \n")
+        sys.stdout.flush()
+        input()
+    except (EOFError, KeyboardInterrupt):
+        pass
+
+
+def print_compact_header(interface: Optional[str] = None) -> None:
+    """
+    Print a compact one-line header for the top of each menu loop iteration.
+    Shows: wifi_down  ◈  <time>  ◈  <interface>
+    """
+    ts    = datetime.now().strftime("%H:%M:%S")
+    iface = interface or _get_interface()
+    t     = Text()
+    t.append("wifi_down", style=_S_MID)
+    t.append("  ◈  ", style=_S_DIAMOND)
+    t.append(ts, style=_S_STATUS_VAL)
+    t.append("  ◈  ", style=_S_DIAMOND)
+    t.append(iface, style=_S_STATUS_VAL)
+    console.print(t, style="dim")
 
 
 def print_banner(
@@ -590,6 +794,15 @@ def print_banner(
     console.print(tag, justify="center")
     console.print(status, justify="center")
     console.print()
+
+    # ── New launch screens ────────────────────────────────────────────────────
+    _print_made_by_art()
+    _print_quotes(3)
+    _print_disclaimer()
+    _pulsing_enter_prompt()
+
+    # Clear screen after user presses Enter — big banner only shows once
+    os.system("clear" if os.name == "posix" else "cls")
 
 
 # ─── Menu and section helpers ─────────────────────────────────────────────────

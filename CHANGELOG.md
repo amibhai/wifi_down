@@ -5,6 +5,102 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [0.4.5] — 2026-06-11
+
+### Changed
+
+- `modules/banner.py` — launch experience overhaul:
+  - **`_print_made_by_art()`** — large 6-row block-letter `MADE BY` art
+    (`MADE_BY_ART` constant) with pink/light-pink gradient (`color(213)` left
+    half → `color(219)` right half); `ॐ अ मी ॐ` centered in Devanagari with
+    `"  Ami  "` Unicode fallback; decorative `···· ✦ ····` deco lines above and
+    below.
+  - **`_print_quotes(num=3)`** — picks 3 random entries from `QUOTES` pool
+    (10 quotes, 8 authors); animates each character at 5 ms/char using raw ANSI
+    italic 256-colour; separated by dim `─` rules; attribution line in
+    `color(51)`.
+  - **`_print_disclaimer()`** — red-bordered Rich `Panel` titled `LEGAL NOTICE`
+    listing CFAA, UK Computer Misuse Act, India IT Act 2000, and HMAC audit
+    trail notice; rendered after quotes.
+  - **`_pulsing_enter_prompt()`** — pulses `[ Press ENTER to continue ]` through
+    3 colour cycles (`color(51)→87→123→87→51`) at 150 ms each, then waits for
+    `input()`; clears screen with `os.system("clear"|"cls")` after Enter so the
+    full banner only appears once per session.
+  - **`print_compact_header(interface=None)`** — one-line dim-cyan header
+    `wifi_down  ◈  HH:MM:SS  ◈  <iface>` using `_S_MID` + `_S_DIAMOND` +
+    `_S_STATUS_VAL` styles; `_get_interface()` auto-detects interface when
+    `interface=None`.
+  - **`print_banner()` flow** — calls `_print_made_by_art()`, `_print_quotes(3)`,
+    `_print_disclaimer()`, `_pulsing_enter_prompt()` in sequence after the
+    animated wifi_down box; clears screen after Enter.
+
+- `wifi_auditor/cli.py` — compact header + session state wiring:
+  - Imports `print_compact_header` from `modules.banner` (alongside existing
+    `print_banner`, `print_menu` etc.).
+  - **Menu loop** — `print_compact_header(interface=state.get("monitor_interface"))`
+    called at the top of every `while True:` iteration so a live timestamp and
+    active interface are always visible.
+  - **`action_capture()`** — stores `handshake_file=cap` in `_sm.transition()`
+    call; `state["capture_file"] = cap` already set.
+  - **`action_full_auto()`** — `_sm.transition(Stage.CAPTURING, capture_file=cap,
+    handshake_file=cap)` added after successful capture.
+  - **`run_headless()`** — `sm.transition(Stage.CAPTURING, capture_file=cap,
+    handshake_file=cap)` added after successful capture.
+
+---
+
+## [0.4.4] — 2026-06-11
+
+### Changed
+
+- `modules/handshake.py` — complete rewrite; three-engine parallel architecture:
+
+  **Engines (all started simultaneously at capture start):**
+
+  - **Engine 1 — airodump-ng file watcher** (`_file_watcher_thread`): polls the
+    `.cap` file every 0.5 s (was 1 s); verifies with all three methods
+    (`_verify_aircrack`, `_verify_cowpatty`, `_verify_tshark`) so partial
+    handshakes that aircrack-ng misses are caught.
+  - **Engine 2 — scapy AsyncSniffer** (`_scapy_sniffer_thread`): captures EAPOL
+    frames in-memory in real-time; zero dependency on disk writes; BPF filter
+    `ether proto 0x888e`; detects M1+M2 directly by checking `Dot11.addr2`
+    (AP→Client) and `Dot11.addr1` (Client→AP) against the target BSSID;
+    writes a `.cap` via `wrpcap()` on success.
+  - **Engine 3 — hcxdumptool PMKID** (`_pmkid_engine_thread`): runs passively
+    from the very start alongside deauth (not as a fallback); checks every 2 s
+    for a valid `.hc22000` via `hcxpcapngtool`; `--disable_deauthentication`
+    flag keeps it passive; BSSID filter written to a tempfile.
+
+  **Verification — three methods (`verify_handshake`):**
+
+  - `_verify_aircrack` — `aircrack-ng -b <bssid> <cap>`; regex for
+    `\d+ handshake` or `WPA (\d+ handshake`.
+  - `_verify_cowpatty` — `cowpatty -r <cap> -s <ssid> -f -`; catches partial
+    handshakes.
+  - `_verify_tshark` — counts EAPOL frames for the target BSSID; ≥2 frames →
+    crackable M1+M2.
+
+  **Deauth improvements:**
+
+  - Channel locked with **both** `iw dev <iface> set channel` and
+    `iwconfig <iface> channel` before any deauth burst (`_lock_channel`).
+  - Cap file verified to exist (`_wait_for_file`, 6 s timeout) before first
+    deauth burst; warns but continues if slow.
+  - Handshake watch ticks every **0.3 s** (was 1 s) inside each deauth interval.
+  - `--ignore-negative-one` passed to every `aireplay-ng` call to prevent
+    channel fighting.
+  - **Phase 1** — 10 targeted unicast attempts × 5 packets, top-2 clients.
+  - **Phase 2** — 5 broadcast fallback attempts × 10 packets.
+  - **Phase 3** — pure PMKID wait up to 90 s (Engine 3 already running).
+
+  **Backward compatibility aliases (existing callers unchanged):**
+
+  - `kill_proc_safe` → `_kill`
+  - `start_capture_process` → `_start_airodump`
+  - `send_deauth_burst` → `_deauth_burst`
+
+---
+
 ## [0.4.3] — 2026-06-10
 
 ### Changed
