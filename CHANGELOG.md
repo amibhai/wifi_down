@@ -5,6 +5,60 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [0.4.2] — 2026-06-10
+
+### Fixed
+
+- **Critical — `enable_monitor_mode` never matched on real airmon-ng output**
+  (`modules/utils.py`).  Pattern 1 contained `\[\S+\]\S+` — the `\S+` after
+  `[wlan0]` requires a non-space character immediately after the closing
+  bracket, but real airmon-ng output is
+  `monitor mode vif enabled for [wlan0] on [wlan0mon]` (space after bracket).
+  The optional group silently failed, then tried to match `on` at the wrong
+  position — so no regex ever matched.
+- **No-op guessing fallback** — the duplicate typo
+  `interface.replace('wlan', 'wlan')` is a no-op; interface name changes were
+  never detected when regex failed.
+
+### Added
+
+- `modules/interface.py` (new module, ~199 lines):
+  - **Fixed regex patterns** — 5 correct patterns covering all real-world
+    airmon-ng output variants (space-separated `on [iface]`, inline, old-style
+    suffix-less, parenthesised, `*mon` shorthand).
+  - `kill_interfering_processes()` — `airmon-ng check kill` + `systemctl stop`
+    for NetworkManager/wpa_supplicant + `pkill -9` for dhclient/dhcpcd + 1.5 s
+    settle sleep; verbose Rich output per step.
+  - `verify_monitor_mode(interface)` — reads `iw dev` and confirms `type
+    monitor` is present for the specific interface after airmon-ng returns.
+  - Full `iw dev` fallback — if regex still finds nothing, scans for any
+    monitor-mode interface already present.
+  - `get_wireless_interfaces()` / `get_monitor_interfaces()` — dedicated
+    helpers for managed and monitor interface lists.
+  - Verbose `RuntimeError` — contains exact command, return code, stdout,
+    stderr, and post-attempt interface list so failures are immediately
+    actionable.
+  - Root check at the top of `enable_monitor_mode`.
+
+### Changed
+
+- `modules/utils.py` — old broken `enable_monitor_mode`, `disable_monitor_mode`,
+  and `kill_interfering_processes` implementations replaced with re-exports from
+  `modules.interface`; minor variable-name fix in `get_wireless_interfaces`
+  (`ifaces` → `iface`).
+- `wifi_auditor/cli.py`:
+  - `action_set_interface()` and `run_headless()` now catch `RuntimeError` and
+    display the full diagnostic message; removed the now-redundant pre-call to
+    `kill_interfering_processes()` (it runs inside `enable_monitor_mode`);
+    removed stale `kill_interfering_processes` import.
+  - `_action_check_interface()` — new diagnostic function: prints `iw dev` raw
+    output, managed/monitor interface lists, interfering processes, airmon-ng
+    availability, and root status.
+  - `--check-interface` CLI flag — runs `_action_check_interface()` and exits;
+    useful for diagnosing issues without reading source code.
+
+---
+
 ## [0.4.1] — 2026-06-10
 
 ### Changed
