@@ -1,8 +1,5 @@
 #!/usr/bin/env python3
-"""
-wifi_down — Terminal Identity Module
-God-level animated banner with column-sweep reveal and noise border.
-"""
+"""wifi_down — Terminal Identity Module"""
 from __future__ import annotations
 
 import os
@@ -16,8 +13,6 @@ from datetime import datetime
 from typing import Optional
 
 from rich.console import Console
-from rich.live import Live
-from rich.panel import Panel
 from rich.style import Style
 from rich.text import Text
 
@@ -37,49 +32,31 @@ class Colors:
 
 C = Colors
 
+
 def _make_console() -> Console:
-    import sys, io
+    import io
     if hasattr(sys.stdout, "buffer"):
-        utf8_out = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8", errors="replace", newline="", line_buffering=True)
+        utf8_out = io.TextIOWrapper(
+            sys.stdout.buffer, encoding="utf-8", errors="replace",
+            newline="", line_buffering=True,
+        )
         return Console(file=utf8_out, force_terminal=True, legacy_windows=False)
     return Console(force_terminal=True, legacy_windows=False)
+
 
 console = _make_console()
 
 # ─── ASCII art constant ───────────────────────────────────────────────────────
 
-WIFI_DOWN_ART = [
-    "██╗    ██╗██╗███████╗██╗    ██████╗  ██████╗ ██╗    ██╗███╗  ██╗",
-    "██║    ██║██║██╔════╝██║    ██╔══██╗██╔═══██╗██║    ██║████╗ ██║",
-    "██║ █╗ ██║██║█████╗  ██║    ██║  ██║██║   ██║██║ █╗ ██║██╔██╗██║",
-    "██║███╗██║██║██╔══╝  ██║    ██║  ██║██║   ██║██║███╗██║██║╚████║",
-    "╚███╔███╔╝██║██║     ██║    ██████╔╝╚██████╔╝╚███╔███╔╝██║ ╚███║",
-    " ╚══╝╚══╝ ╚═╝╚═╝     ╚═╝    ╚═════╝  ╚═════╝  ╚══╝╚══╝ ╚═╝  ╚══╝",
-]
+WIFI_DOWN_ART = """\
+██╗    ██╗██╗███████╗██╗    ██████╗  ██████╗ ██╗    ██╗███╗  ██╗
+██║    ██║██║██╔════╝██║    ██╔══██╗██╔═══██╗██║    ██║████╗ ██║
+██║ █╗ ██║██║█████╗  ██║    ██║  ██║██║   ██║██║ █╗ ██║██╔██╗██║
+██║███╗██║██║██╔══╝  ██║    ██║  ██║██║   ██║██║███╗██║██║╚████║
+╚███╔███╔╝██║██║     ██║    ██████╔╝╚██████╔╝╚███╔███╔╝██║ ╚███║
+ ╚══╝╚══╝ ╚═╝╚═╝     ╚═╝    ╚═════╝  ╚═════╝  ╚══╝╚══╝ ╚═╝  ╚══╝"""
 
-_TAGLINES = [
-    "silence is not security.",
-    "every network has a story.",
-    "the quietest signal is the loudest warning.",
-    "authorized eyes only.",
-    "packets don't lie.",
-    "trust nothing. verify everything.",
-    "you cannot defend what you cannot see.",
-    "signal found. identity unknown.",
-]
-
-# ─── made by अमी — large ASCII art (fallback when pyfiglet unavailable) ────────
-
-MADE_BY_ART = [
-    "███╗   ███╗ █████╗ ██████╗ ███████╗    ██████╗ ██╗   ██╗",
-    "████╗ ████║██╔══██╗██╔══██╗██╔════╝    ██╔══██╗╚██╗ ██╔╝",
-    "██╔████╔██║███████║██║  ██║█████╗      ██████╔╝ ╚████╔╝ ",
-    "██║╚██╔╝██║██╔══██║██║  ██║██╔══╝      ██╔══██╗  ╚██╔╝  ",
-    "██║ ╚═╝ ██║██║  ██║██████╔╝███████╗    ██████╔╝   ██║   ",
-    "╚═╝     ╚═╝╚═╝  ╚═╝╚═════╝ ╚══════╝    ╚═════╝    ╚═╝   ",
-]
-
-# ─── Hacker quotes ────────────────────────────────────────────────────────────
+# ─── Quotes ───────────────────────────────────────────────────────────────────
 
 QUOTES = [
     ("Kevin Mitnick",
@@ -87,84 +64,95 @@ QUOTES = [
      "and we still don't take it seriously enough."),
     ("Bruce Schneier",
      "Security is not a product, but a process."),
-    ("Kevin Mitnick",
-     "Companies spend millions of dollars on firewalls, "
-     "encryption and secure access devices, and it's money wasted "
-     "because none of these measures address the weakest link "
-     "in the security chain: the people who use, administer, "
-     "and operate computer systems."),
+    ("Bruce Schneier",
+     "Amateurs hack systems, professionals hack people."),
     ("Dan Kaminsky",
      "We keep saying the internet isn't a safe place. "
      "But we built it as if it was."),
     ("Mikko Hyppönen",
      "If it's smart, it's vulnerable."),
-    ("Richard Stallman",
-     "Sharing is good, and with digital technology, sharing is easy."),
     ("Edward Snowden",
-     "Arguing that you don't care about privacy because you have nothing "
-     "to hide is no different from saying you don't care about free speech "
-     "because you have nothing to say."),
+     "Arguing that you don't care about privacy because you have "
+     "nothing to hide is no different from saying you don't care "
+     "about free speech because you have nothing to say."),
     ("Anonymous",
-     "We are legion. We do not forgive. We do not forget. Expect us."),
-    ("Linus Torvalds",
-     "Software is like sex: it's better when it's free."),
-    ("Bruce Schneier",
-     "Amateurs hack systems, professionals hack people."),
+     "We are legion. We do not forgive. "
+     "We do not forget. Expect us."),
+    ("Richard Stallman",
+     "Free software is a matter of liberty, not price."),
+    ("Tsutomu Shimomura",
+     "The key to security is knowing what you are protecting "
+     "and who you are protecting it from."),
+    ("Gene Spafford",
+     "The only truly secure system is one that is powered off, "
+     "cast in a block of concrete and sealed in a lead-lined room "
+     "with armed guards."),
+    ("Kevin Poulsen",
+     "Hackers are breaking the systems for profit. "
+     "Before, it was about intellectual curiosity and "
+     "there was an understanding that you don't do damage."),
+    ("Parisa Tabriz",
+     "I think of hacking as an intellectual challenge — "
+     "a puzzle waiting to be solved."),
 ]
-
-_S_OUTER   = Style(color="color(23)", dim=True)
-_S_NOISE_A = Style(color="color(23)", dim=True)
-_S_NOISE_B = Style(color="color(30)", dim=True)
-_S_LEFT    = Style(color="color(51)")
-_S_MID     = Style(color="color(87)", bold=True)
-_S_RIGHT   = Style(color="color(50)")
-_S_CORNER  = Style(color="color(45)", bold=True)
-_S_BRIDGE  = Style(color="color(51)", bold=True)
-_S_CREDIT_PRE = Style(color="color(240)", italic=True)
-_S_CREDIT_NAME = Style(color="color(213)", bold=True)
-_S_DIAMOND = Style(color="color(51)")
-_S_SEP_DASH = Style(color="color(23)", dim=True)
-_S_TAG_TEXT = Style(color="color(240)", italic=True)
-_S_TAG_TRI  = Style(color="color(51)")
-_S_STATUS_SYM = Style(color="color(51)")
-_S_STATUS_KEY = Style(color="color(240)", dim=True)
-_S_STATUS_VAL = Style(color="color(87)", bold=True)
 
 _CORNER_CHARS = frozenset("╗╔╝╚╣╠╦╩╬")
 
+# ─── Styles ───────────────────────────────────────────────────────────────────
 
-def _noise_char(col: int) -> Style:
-    return _S_NOISE_A if col % 2 == 0 else _S_NOISE_B
+_S_LEFT   = Style(color="color(51)")
+_S_MID    = Style(color="color(87)", bold=True)
+_S_RIGHT  = Style(color="color(50)")
+_S_CORNER = Style(color="color(45)", bold=True)
+
+_RESET = "\033[0m"
+
+# ─── Core primitives ──────────────────────────────────────────────────────────
+
+def _ansi(style_str: str) -> str:
+    """Convert a space-separated Rich-style string to an ANSI escape sequence.
+
+    Supported tokens: bold, dim, italic, color(N)
+    Example: _ansi("color(213) bold") → "\\033[1;38;5;213m"
+    """
+    codes: list[str] = []
+    for token in style_str.split():
+        if token == "bold":
+            codes.append("1")
+        elif token == "dim":
+            codes.append("2")
+        elif token == "italic":
+            codes.append("3")
+        elif token.startswith("color(") and token.endswith(")"):
+            n = token[6:-1]
+            codes.append(f"38;5;{n}")
+    return f"\033[{';'.join(codes)}m" if codes else ""
 
 
-def _color_art_row(row: str) -> Text:
-    """Split row into three zones and apply gradient + corner accent."""
-    n = len(row)
-    third = n // 3
-    left   = row[:third]
-    middle = row[third:2*third]
-    right  = row[2*third:]
+def typewrite(
+    text: str,
+    style: str = "",
+    delay: float = 0.018,
+    newline: bool = True,
+) -> None:
+    """Print text character-by-character with optional ANSI style and delay."""
+    esc = _ansi(style) if style else ""
+    for char in text:
+        sys.stdout.write(f"{esc}{char}{_RESET}" if esc else char)
+        sys.stdout.flush()
+        time.sleep(delay)
+    if newline:
+        sys.stdout.write("\n")
+        sys.stdout.flush()
 
-    def _assemble_section(s: str, base: Style) -> list[tuple[str, Style]]:
-        parts = []
-        for ch in s:
-            if ch in _CORNER_CHARS:
-                parts.append((ch, _S_CORNER))
-            else:
-                parts.append((ch, base))
-        return parts
 
-    pieces = (
-        _assemble_section(left,   _S_LEFT) +
-        _assemble_section(middle, _S_MID)  +
-        _assemble_section(right,  _S_RIGHT)
-    )
-    return Text.assemble(*pieces)
-
+# ─── Helpers ──────────────────────────────────────────────────────────────────
 
 def _get_interface() -> str:
     try:
-        out = subprocess.check_output(["iw", "dev"], stderr=subprocess.DEVNULL, timeout=2).decode()
+        out = subprocess.check_output(
+            ["iw", "dev"], stderr=subprocess.DEVNULL, timeout=2
+        ).decode()
         for line in out.splitlines():
             line = line.strip()
             if line.startswith("Interface"):
@@ -181,628 +169,205 @@ def _get_scope() -> str:
     return "none"
 
 
-def _credit_text(fallback: bool = False) -> Text:
-    name = "Ami" if fallback else "अमी"
+# ─── Banner sections ──────────────────────────────────────────────────────────
+
+def _color_row(row: str) -> Text:
+    """Apply tri-zone color gradient to a single art row."""
+    n  = len(row)
+    t1 = row[:n // 3]
+    t2 = row[n // 3 : 2 * n // 3]
+    t3 = row[2 * n // 3:]
+
+    def _section(s: str, base: Style) -> list:
+        return [(ch, _S_CORNER if ch in _CORNER_CHARS else base) for ch in s]
+
     return Text.assemble(
-        ("made by ", _S_CREDIT_PRE),
-        (name,       _S_CREDIT_NAME),
+        *_section(t1, _S_LEFT),
+        *_section(t2, _S_MID),
+        *_section(t3, _S_RIGHT),
     )
 
 
-def _build_static_banner(width: int) -> list[Text]:
-    """Build full banner as list of Text lines (no animation)."""
-    inner_w = width - 2  # inside │ │
-    art_w = len(WIFI_DOWN_ART[0])
-    pad_total = inner_w - art_w - 4  # 4 = two ░ each side
-    pad_l = pad_total // 2
-    pad_r = pad_total - pad_l
-
-    noise_w = inner_w  # ░ row spans full inner width
-
-    lines: list[Text] = []
-
-    # Top border
-    top = Text()
-    top.append("┌" + "─" * inner_w + "┐", style=_S_OUTER)
-    lines.append(top)
-
-    # Empty inner line
-    def _empty_inner() -> Text:
-        t = Text()
-        t.append("│" + " " * inner_w + "│", style=_S_OUTER)
-        return t
-
-    lines.append(_empty_inner())
-    lines.append(_empty_inner())
-
-    # Top noise row
-    def _noise_row() -> Text:
-        t = Text()
-        t.append("│", style=_S_OUTER)
-        t.append(" ", style=_S_OUTER)
-        for i in range(noise_w - 2):
-            t.append("░", style=_noise_char(i))
-        t.append(" ", style=_S_OUTER)
-        t.append("│", style=_S_OUTER)
-        return t
-
-    lines.append(_noise_row())
-
-    # Empty noise-bordered lines (2 blank lines inside noise)
-    def _noise_border_empty() -> Text:
-        t = Text()
-        t.append("│", style=_S_OUTER)
-        t.append(" ", style=_S_OUTER)
-        t.append("░", style=_S_NOISE_A)
-        t.append(" " * (inner_w - 4), style=_S_OUTER)
-        t.append("░", style=_S_NOISE_B)
-        t.append(" ", style=_S_OUTER)
-        t.append("│", style=_S_OUTER)
-        return t
-
-    lines.append(_noise_border_empty())
-
-    # ASCII art rows
-    for row in WIFI_DOWN_ART:
-        t = Text()
-        t.append("│", style=_S_OUTER)
-        t.append(" ", style=_S_OUTER)
-        t.append("░", style=_S_NOISE_A)
-        t.append(" " * (pad_l + 1), style=_S_OUTER)
-        t.append_text(_color_art_row(row))
-        t.append(" " * (pad_r + 1), style=_S_OUTER)
-        t.append("░", style=_S_NOISE_B)
-        t.append(" ", style=_S_OUTER)
-        t.append("│", style=_S_OUTER)
-        lines.append(t)
-
-    # Credit line (right-aligned inside noise border)
-    try:
-        credit = _credit_text(fallback=False)
-    except Exception:
-        credit = _credit_text(fallback=True)
-
-    credit_len = len("made by ") + len("अमी")
-    credit_pad = inner_w - 4 - credit_len - 2  # 4=noise borders, 2=spaces around
-
-    credit_line = Text()
-    credit_line.append("│", style=_S_OUTER)
-    credit_line.append(" ", style=_S_OUTER)
-    credit_line.append("░", style=_S_NOISE_A)
-    credit_line.append(" " * max(credit_pad, 1), style=_S_OUTER)
-    credit_line.append_text(credit)
-    credit_line.append("  ", style=_S_OUTER)
-    credit_line.append("░", style=_S_NOISE_B)
-    credit_line.append(" ", style=_S_OUTER)
-    credit_line.append("│", style=_S_OUTER)
-    lines.append(credit_line)
-
-    # Bottom noise row
-    lines.append(_noise_row())
-
-    # Two empty lines
-    lines.append(_empty_inner())
-    lines.append(_empty_inner())
-
-    # Bottom border
-    bot = Text()
-    bot.append("└" + "─" * inner_w + "┘", style=_S_OUTER)
-    lines.append(bot)
-
-    return lines
+def _print_art() -> None:
+    """Scan-line reveal — prints each art row with a 0.04 s delay."""
+    for row in WIFI_DOWN_ART.splitlines():
+        if not row.strip():
+            continue
+        console.print(_color_row(row))
+        time.sleep(0.04)
 
 
-def _build_separator(width: int) -> Text:
-    sym = "◈"
-    dash_total = width - len(sym) - 2
-    left_d  = dash_total // 2
-    right_d = dash_total - left_d
-    t = Text()
-    t.append("─" * left_d, style=_S_SEP_DASH)
-    t.append(f" {sym} ", style=_S_DIAMOND)
-    t.append("─" * right_d, style=_S_SEP_DASH)
-    return t
+def _print_made_by() -> None:
+    """Right-aligned 'made by अ म ी' printed char-by-char at 0.04 s/char.
 
-
-def _build_tagline(tagline: str) -> Text:
-    t = Text()
-    t.append("◤  ", style=_S_TAG_TRI)
-    t.append(tagline, style=_S_TAG_TEXT)
-    t.append("  ◥", style=_S_TAG_TRI)
-    return t
-
-
-def _build_status(iface: str, scope: str, ts: str) -> Text:
-    t = Text()
-    t.append("◈ ", style=_S_STATUS_SYM)
-    t.append("interface: ", style=_S_STATUS_KEY)
-    t.append(iface, style=_S_STATUS_VAL)
-    t.append("   ◈ ", style=_S_STATUS_SYM)
-    t.append("scope: ", style=_S_STATUS_KEY)
-    t.append(scope, style=_S_STATUS_VAL)
-    t.append("   ◈ ", style=_S_STATUS_SYM)
-    t.append("session: ", style=_S_STATUS_KEY)
-    t.append(ts, style=_S_STATUS_VAL)
-    t.append("   ◈", style=_S_STATUS_SYM)
-    return t
-
-
-def _render_frame(lines: list[Text]) -> Text:
-    result = Text()
-    for i, line in enumerate(lines):
-        if i > 0:
-            result.append("\n")
-        result.append_text(line)
-    return result
-
-
-def _compact_banner() -> None:
-    """Fallback for narrow terminals."""
-    try:
-        name = "अमी"
-        name.encode(console.encoding or "utf-8")
-    except (UnicodeEncodeError, LookupError):
-        name = "Ami"
-
-    console.print("┌─────────────────────────┐", style=_S_OUTER)
-    t = Text()
-    t.append("│  ", style=_S_OUTER)
-    t.append("wifi_down", style=_S_MID)
-    t.append("              │", style=_S_OUTER)
-    console.print(t)
-    c2 = Text()
-    c2.append("│  ", style=_S_OUTER)
-    c2.append("made by ", style=_S_CREDIT_PRE)
-    c2.append(name, style=_S_CREDIT_NAME)
-    c2.append("            │", style=_S_OUTER)
-    console.print(c2)
-    console.print("└─────────────────────────┘", style=_S_OUTER)
-
-
-def _print_made_by_art() -> None:
-    """Print the large 'MADE BY अमी' section centered."""
-    _S_ART_L = Style(color="color(213)", bold=True)
-    _S_ART_R = Style(color="color(219)", bold=True)
-    _S_DECO  = Style(color="color(213)", dim=True)
-    _S_PRE   = Style(color="color(240)", italic=True)
-    _S_DEVA  = Style(color="color(213)", bold=True)
-
-    deco = "···················· ✦ ····················"
-    console.print(deco, justify="center", style=_S_DECO)
-    console.print()
-    console.print("made by", justify="center", style=_S_PRE)
-    console.print()
-
-    for row in MADE_BY_ART:
-        n    = len(row)
-        half = n // 2
-        t    = Text()
-        t.append(row[:half], style=_S_ART_L)
-        t.append(row[half:], style=_S_ART_R)
-        console.print(t, justify="center")
-
-    console.print()
+    Uses Devanagari with spaces between aksharas; ASCII fallback 'A m i'.
+    """
+    parts_normal = [
+        ("── made by ",  "color(240) italic"),
+        ("  अ म ी  ",   "color(213) bold"),
+        (" ──",          "color(240) italic"),
+    ]
+    parts_fallback = [
+        ("── made by ",  "color(240) italic"),
+        ("  A m i  ",    "color(213) bold"),
+        (" ──",          "color(240) italic"),
+    ]
 
     try:
-        devanagari = "  ॐ  अ मी  ॐ  "
-        devanagari.encode(console.encoding or "utf-8")
-        console.print(devanagari, justify="center", style=_S_DEVA)
-    except (UnicodeEncodeError, LookupError):
-        console.print("  Ami  ", justify="center", style=_S_DEVA)
+        full = "".join(p[0] for p in parts_normal)
+        full.encode("utf-8")
+        parts = parts_normal
+    except (UnicodeEncodeError, UnicodeDecodeError):
+        full  = "".join(p[0] for p in parts_fallback)
+        parts = parts_fallback
+
+    width   = console.width
+    padding = max(0, width - len(full))
+    sys.stdout.write(" " * padding)
+    sys.stdout.flush()
+
+    for text, style_str in parts:
+        esc = _ansi(style_str)
+        for char in text:
+            sys.stdout.write(f"{esc}{char}{_RESET}")
+            sys.stdout.flush()
+            time.sleep(0.04)
+
+    sys.stdout.write("\n")
+    sys.stdout.flush()
+
+
+def _print_quote(author: str, quote: str) -> None:
+    """Single quote with separator/❝❞ formatting, typewriter output."""
+    sep = "  ─────────────────────────────────────────────────"
+    typewrite(sep, style="color(238) dim", delay=0.005)
+    console.print()
+
+    wrapped_lines = textwrap.fill(quote, width=65).splitlines()
+    for i, ln in enumerate(wrapped_lines):
+        prefix = "   ❝  " if i == 0 else "      "
+        suffix = "  ❞" if i == len(wrapped_lines) - 1 else ""
+        typewrite(prefix + ln + suffix, style="color(252) italic", delay=0.022)
 
     console.print()
-    console.print(deco, justify="center", style=_S_DECO)
+    typewrite(f"        — {author}", style="color(87) bold", delay=0.035)
     console.print()
-
-
-def _print_quotes(num: int = 3) -> None:
-    """Print N random hacker quotes, animated char by char."""
-    selected = random.sample(QUOTES, min(num, len(QUOTES)))
-    _ANSI_ITALIC_252 = "\033[3;38;5;252m"
-    _ANSI_RESET      = "\033[0m"
-
-    for i, (author, quote) in enumerate(selected):
-        if i > 0:
-            console.print("    " + "─" * 42, style=Style(color="color(238)", dim=True))
-            console.print()
-
-        # Wrap quote text and animate char by char
-        lines = textwrap.wrap(quote, width=68)
-        for j, line in enumerate(lines):
-            prefix = "    ❝ " if j == 0 else "      "
-            suffix = " ❞" if j == len(lines) - 1 else ""
-            try:
-                sys.stdout.write(f"{_ANSI_ITALIC_252}{prefix}")
-                sys.stdout.flush()
-                for ch in line + suffix:
-                    sys.stdout.write(ch)
-                    sys.stdout.flush()
-                    time.sleep(0.005)
-                sys.stdout.write(f"{_ANSI_RESET}\n")
-                sys.stdout.flush()
-            except (UnicodeEncodeError, OSError):
-                print(f"{prefix}{line}{suffix}")
-
-        # Author line (non-animated, Rich styled)
-        console.print(
-            f"        — {author}",
-            style=Style(color="color(51)", bold=True)
-        )
-        console.print()
+    typewrite(sep, style="color(238) dim", delay=0.005)
 
 
 def _print_disclaimer() -> None:
-    """Print the legal disclaimer in a red-bordered panel."""
-    from rich.text import Text as RText
-
-    body = RText()
-    body.append("\n  wifi_down", style=Style(color="color(252)"))
-    body.append(
-        " is a professional security auditing framework\n"
-        "  intended for authorized testing ",
-        style=Style(color="color(252)")
-    )
-    body.append("ONLY", style=Style(color="color(196)", bold=True))
-    body.append(".\n\n", style=Style(color="color(252)"))
-
-    bullets = [
-        "Use ONLY on networks you own or have WRITTEN permission to test.",
-        ("Unauthorized access is a criminal offence under CFAA,\n"
-         "    UK Computer Misuse Act, India IT Act 2000, and similar\n"
-         "    laws worldwide."),
-        "The authors accept NO liability for misuse.",
-        "All activities are logged with HMAC-chained audit trail.",
-    ]
-    for b in bullets:
-        body.append("  • ", style=Style(color="color(214)"))
-        body.append(b + "\n", style=Style(color="color(252)"))
-
-    body.append("\n", style=Style(color="color(252)"))
-
-    console.print(Panel(
-        body,
-        title="[bold color(196)]LEGAL NOTICE[/]",
-        border_style="color(196)",
-        padding=(0, 2),
-    ))
+    """Plain typewriter legal notice — no Rich Panel."""
+    sep = "  ─────────────────────────────────────────────────"
     console.print()
+    typewrite(sep, style="color(238) dim", delay=0.005)
+    console.print()
+    typewrite("  ⚠  LEGAL NOTICE", style="color(196) bold", delay=0.03)
+    console.print()
+    typewrite("  Use only on networks you own or have written",     style="color(252)", delay=0.015)
+    typewrite("  permission to test. Unauthorized access is a",     style="color(252)", delay=0.015)
+    typewrite("  criminal offence under CFAA, IT Act 2000 and",     style="color(252)", delay=0.015)
+    typewrite("  similar laws worldwide. No liability accepted.",    style="color(252)", delay=0.015)
+    console.print()
+    typewrite(sep, style="color(238) dim", delay=0.005)
 
 
-def _pulsing_enter_prompt() -> None:
-    """Pulse the Enter prompt 3 times then wait for the user to press Enter."""
-    _COLORS = [
-        "\033[1;38;5;51m",
-        "\033[1;38;5;87m",
-        "\033[1;38;5;123m",
-        "\033[1;38;5;87m",
-        "\033[1;38;5;51m",
+def _print_status(iface: str, scope: str, ts: str) -> None:
+    """Segment-by-segment ANSI typewriter status line."""
+    console.print()
+    segments = [
+        ("  ◈ ",        "color(51)"),
+        ("interface: ",  "color(240) dim"),
+        (iface,          "color(87) bold"),
+        ("   ◈ ",        "color(51)"),
+        ("scope: ",      "color(240) dim"),
+        (scope,          "color(87) bold"),
+        ("   ◈ ",        "color(51)"),
+        (ts,             "color(87) bold"),
     ]
-    _RESET  = "\033[0m"
-    prompt  = "[ Press ENTER to continue ]"
-    pad     = "  "
+    for text, style_str in segments:
+        esc = _ansi(style_str)
+        for char in text:
+            sys.stdout.write(f"{esc}{char}{_RESET}")
+            sys.stdout.flush()
+            time.sleep(0.012)
+    sys.stdout.write("\n")
+    sys.stdout.flush()
 
-    # Pulse 3 cycles
-    for _ in range(3):
-        for color in _COLORS:
-            try:
-                sys.stdout.write(f"\r{pad}{color}{prompt}{_RESET}   ")
-                sys.stdout.flush()
-            except (UnicodeEncodeError, OSError):
-                pass
+
+def _print_enter_prompt() -> None:
+    """Typewriter prompt → 3-color pulse (51→87→123→87→51) → wait → clear."""
+    prompt = "           [ Press ENTER to launch wifi_down ]"
+    console.print()
+    typewrite(prompt, style="color(51) bold", delay=0.045)
+
+    pulse_colors = ["color(51)", "color(87)", "color(123)", "color(87)", "color(51)"]
+    for cycle in range(3):
+        for c in pulse_colors:
+            esc = _ansi(c + " bold")
+            sys.stdout.write(f"\r{esc}{prompt}{_RESET}   ")
+            sys.stdout.flush()
             time.sleep(0.15)
 
-    # Show final static prompt and wait
+    sys.stdout.write("\r" + " " * (len(prompt) + 3) + "\r")
+    sys.stdout.flush()
+
     try:
-        sys.stdout.write(f"\r{pad}\033[1;38;5;51m{prompt}\033[0m   \n")
-        sys.stdout.flush()
-        input()
+        input("")
     except (EOFError, KeyboardInterrupt):
         pass
 
+    console.clear()
+
+
+# ─── Public API ───────────────────────────────────────────────────────────────
+
+def print_banner() -> None:
+    """Full launch banner — called once at startup.
+
+    Flow:
+        1. clear screen
+        2. scan-line art reveal (_print_art)
+        3. right-aligned 'made by अ म ी' (_print_made_by)
+        4. one random hacker quote (_print_quote)
+        5. plain typewriter disclaimer (_print_disclaimer)
+        6. segment typewriter status bar (_print_status)
+        7. typewriter + pulsing Enter prompt (_print_enter_prompt)
+           → console.clear() after Enter
+    """
+    os.system("clear" if os.name == "posix" else "cls")
+
+    iface = _get_interface()
+    scope = _get_scope()
+    ts    = datetime.now().strftime("%Y-%m-%d  %H:%M:%S")
+
+    _print_art()
+    _print_made_by()
+
+    author, quote = random.choice(QUOTES)
+    console.print()
+    _print_quote(author, quote)
+    _print_disclaimer()
+    _print_status(iface, scope, ts)
+    _print_enter_prompt()
+
 
 def print_compact_header(interface: Optional[str] = None) -> None:
+    """One-line header — called at top of every menu loop iteration.
+
+    Shows:  wifi_down  ◈  YYYY-MM-DD  HH:MM:SS  ◈  <iface>
+    Does NOT clear the screen.
     """
-    Print a compact one-line header for the top of each menu loop iteration.
-    Shows: wifi_down  ◈  <time>  ◈  <interface>
-    """
-    ts    = datetime.now().strftime("%H:%M:%S")
+    ts    = datetime.now().strftime("%Y-%m-%d  %H:%M:%S")
     iface = interface or _get_interface()
-    t     = Text()
-    t.append("wifi_down", style=_S_MID)
-    t.append("  ◈  ", style=_S_DIAMOND)
-    t.append(ts, style=_S_STATUS_VAL)
-    t.append("  ◈  ", style=_S_DIAMOND)
-    t.append(iface, style=_S_STATUS_VAL)
-    console.print(t, style="dim")
-
-
-def print_banner(
-    interface: Optional[str] = None,
-    targets: int = 0,
-    scope_file: Optional[str] = None,
-    animate: bool = True,
-) -> None:
-    os.system("clear" if os.name == "posix" else "cls")
-
-    width = min(console.width, 100)
-
-    if width < 90:
-        _compact_banner()
-        return
-
-    iface = interface or _get_interface()
-    scope = _get_scope()
-    ts    = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    tagline = random.choice(_TAGLINES)
-
-    inner_w = width - 2
-    art_w   = len(WIFI_DOWN_ART[0])
-    # inner_w = 1(sp) + 1(░) + (pad_l+1) + art_w + (pad_r+1) + 1(░) + 1(sp)  → offset is 6
-    pad_total = inner_w - art_w - 6
-    pad_l = max(pad_total // 2, 0)
-    pad_r = max(pad_total - pad_l, 0)
-    noise_w = inner_w
-
-    # ── helpers ──────────────────────────────────────────────────────────────
-
-    def _empty_inner() -> Text:
-        t = Text()
-        t.append("│" + " " * inner_w + "│", style=_S_OUTER)
-        return t
-
-    def _noise_row_text(flicker: bool = False) -> Text:
-        t = Text()
-        t.append("│", style=_S_OUTER)
-        t.append(" ", style=_S_OUTER)
-        for i in range(noise_w - 2):
-            ch = "▒" if (flicker and random.random() < 0.4) else "░"
-            t.append(ch, style=_noise_char(i))
-        t.append(" ", style=_S_OUTER)
-        t.append("│", style=_S_OUTER)
-        return t
-
-    def _noise_border_empty() -> Text:
-        t = Text()
-        t.append("│", style=_S_OUTER)
-        t.append(" ", style=_S_OUTER)
-        t.append("░", style=_S_NOISE_A)
-        t.append(" " * (inner_w - 4), style=_S_OUTER)
-        t.append("░", style=_S_NOISE_B)
-        t.append(" ", style=_S_OUTER)
-        t.append("│", style=_S_OUTER)
-        return t
-
-    def _art_row_text(row: str) -> Text:
-        t = Text()
-        t.append("│", style=_S_OUTER)
-        t.append(" ", style=_S_OUTER)
-        t.append("░", style=_S_NOISE_A)
-        t.append(" " * (pad_l + 1), style=_S_OUTER)
-        t.append_text(_color_art_row(row))
-        t.append(" " * (pad_r + 1), style=_S_OUTER)
-        t.append("░", style=_S_NOISE_B)
-        t.append(" ", style=_S_OUTER)
-        t.append("│", style=_S_OUTER)
-        return t
-
-    def _art_row_partial(row: str, col_limit: int) -> Text:
-        """Render art row up to col_limit characters wide (column sweep)."""
-        partial = row[:col_limit]
-        # pad to full width with spaces to keep layout stable
-        padding = " " * (len(row) - len(partial))
-        t = Text()
-        t.append("│", style=_S_OUTER)
-        t.append(" ", style=_S_OUTER)
-        t.append("░", style=_S_NOISE_A)
-        t.append(" " * (pad_l + 1), style=_S_OUTER)
-        n = len(partial)
-        third = len(row) // 3
-        left_p   = partial[:third]
-        mid_p    = partial[third:2*third]
-        right_p  = partial[2*third:]
-        def _section(s: str, base: Style) -> list[tuple[str, Style]]:
-            return [(ch, _S_CORNER if ch in _CORNER_CHARS else base) for ch in s]
-        pieces = _section(left_p, _S_LEFT) + _section(mid_p, _S_MID) + _section(right_p, _S_RIGHT)
-        if pieces:
-            t.append_text(Text.assemble(*pieces))
-        t.append(padding, style=_S_OUTER)
-        t.append(" " * (pad_r + 1), style=_S_OUTER)
-        t.append("░", style=_S_NOISE_B)
-        t.append(" ", style=_S_OUTER)
-        t.append("│", style=_S_OUTER)
-        return t
-
-    try:
-        _credit_text(fallback=False)
-        use_fallback = False
-    except Exception:
-        use_fallback = True
-
-    def _credit_line_text() -> Text:
-        credit = _credit_text(fallback=use_fallback)
-        credit_rendered = "made by " + ("Ami" if use_fallback else "अमी")
-        credit_len = len(credit_rendered)
-        credit_pad = inner_w - 4 - credit_len - 2
-        t = Text()
-        t.append("│", style=_S_OUTER)
-        t.append(" ", style=_S_OUTER)
-        t.append("░", style=_S_NOISE_A)
-        t.append(" " * max(credit_pad, 1), style=_S_OUTER)
-        t.append_text(credit)
-        t.append("  ", style=_S_OUTER)
-        t.append("░", style=_S_NOISE_B)
-        t.append(" ", style=_S_OUTER)
-        t.append("│", style=_S_OUTER)
-        return t
-
-    # ── PHASE 1: draw outer border box ───────────────────────────────────────
-    # Build line index layout:
-    # 0: top border
-    # 1,2: empty inner
-    # 3: top noise row
-    # 4: empty noise border
-    # 5-10: art rows (6 rows)
-    # 11: credit line
-    # 12: bottom noise row
-    # 13,14: empty inner
-    # 15: bottom border
-
-    TOTAL_LINES = 16
-    ART_START   = 5
-    ART_END     = 11  # exclusive
-    CREDIT_LINE = 11
-    BOT_NOISE   = 12
-    BOT_INNER1  = 13
-    BOT_INNER2  = 14
-    BOT_BORDER  = 15
-
-    # Initialize all lines as empty Text
-    frame: list[Text] = [Text(" ") for _ in range(TOTAL_LINES)]
-
-    def _push(live: Live) -> None:
-        live.update(_render_frame(frame))
-
-    if not animate:
-        # Static render
-        frame[0] = Text("┌" + "─" * inner_w + "┐", style=_S_OUTER)
-        frame[1] = _empty_inner()
-        frame[2] = _empty_inner()
-        frame[3] = _noise_row_text()
-        frame[4] = _noise_border_empty()
-        for i, row in enumerate(WIFI_DOWN_ART):
-            frame[ART_START + i] = _art_row_text(row)
-        frame[CREDIT_LINE] = _credit_line_text()
-        frame[BOT_NOISE]   = _noise_row_text()
-        frame[BOT_INNER1]  = _empty_inner()
-        frame[BOT_INNER2]  = _empty_inner()
-        frame[BOT_BORDER]  = Text("└" + "─" * inner_w + "┘", style=_S_OUTER)
-        for line in frame:
-            console.print(line)
-    else:
-        with Live(console=console, refresh_per_second=120, transient=False) as live:
-
-            # PHASE 1 — outer border
-            top_chars = "┌" + "─" * inner_w + "┐"
-            top_built = ""
-            for ch in top_chars:
-                top_built += ch
-                frame[0] = Text(top_built, style=_S_OUTER)
-                _push(live)
-                time.sleep(0.003)
-
-            # Side bars top-to-bottom (lines 1–14)
-            for row_idx in range(1, BOT_BORDER):
-                frame[row_idx] = Text("│" + " " * inner_w + "│", style=_S_OUTER)
-                _push(live)
-                time.sleep(0.003)
-
-            # Bottom border left-to-right
-            bot_chars = "└" + "─" * inner_w + "┘"
-            bot_built = ""
-            for ch in bot_chars:
-                bot_built += ch
-                frame[BOT_BORDER] = Text(bot_built, style=_S_OUTER)
-                _push(live)
-                time.sleep(0.003)
-
-            # PHASE 2 — noise border fill with flicker
-            # Top noise row
-            noise_built_top = ["░"] * (noise_w - 2)
-            for i in range(noise_w - 2):
-                noise_built_top[i] = "▒"
-                t = Text()
-                t.append("│", style=_S_OUTER)
-                t.append(" ", style=_S_OUTER)
-                for j, c in enumerate(noise_built_top):
-                    t.append(c, style=_noise_char(j))
-                t.append(" ", style=_S_OUTER)
-                t.append("│", style=_S_OUTER)
-                frame[3] = t
-                _push(live)
-                time.sleep(0.001)
-                noise_built_top[i] = "░"
-                t2 = Text()
-                t2.append("│", style=_S_OUTER)
-                t2.append(" ", style=_S_OUTER)
-                for j, c in enumerate(noise_built_top):
-                    t2.append(c, style=_noise_char(j))
-                t2.append(" ", style=_S_OUTER)
-                t2.append("│", style=_S_OUTER)
-                frame[3] = t2
-                _push(live)
-                time.sleep(0.002)
-
-            frame[4] = _noise_border_empty()
-            _push(live)
-
-            # Art row noise borders (left ░ only for now)
-            for i in range(6):
-                frame[ART_START + i] = _noise_border_empty()
-            _push(live)
-
-            # Bottom noise row flicker
-            noise_built_bot = ["░"] * (noise_w - 2)
-            for i in range(noise_w - 2):
-                noise_built_bot[i] = "▒"
-                t = Text()
-                t.append("│", style=_S_OUTER)
-                t.append(" ", style=_S_OUTER)
-                for j, c in enumerate(noise_built_bot):
-                    t.append(c, style=_noise_char(j))
-                t.append(" ", style=_S_OUTER)
-                t.append("│", style=_S_OUTER)
-                frame[BOT_NOISE] = t
-                _push(live)
-                time.sleep(0.001)
-                noise_built_bot[i] = "░"
-                t2 = Text()
-                t2.append("│", style=_S_OUTER)
-                t2.append(" ", style=_S_OUTER)
-                for j, c in enumerate(noise_built_bot):
-                    t2.append(c, style=_noise_char(j))
-                t2.append(" ", style=_S_OUTER)
-                t2.append("│", style=_S_OUTER)
-                frame[BOT_NOISE] = t2
-                _push(live)
-                time.sleep(0.002)
-
-            # PHASE 3 — column sweep across all 6 art rows simultaneously
-            max_cols = len(WIFI_DOWN_ART[0])
-            for col in range(0, max_cols + 1):
-                for i, row in enumerate(WIFI_DOWN_ART):
-                    frame[ART_START + i] = _art_row_partial(row, col)
-                _push(live)
-                time.sleep(0.008)
-
-            # PHASE 4 — credit line typing right-to-left
-            frame[CREDIT_LINE] = _credit_line_text()
-            _push(live)
-            time.sleep(0.04)
-
-            # PHASE 5 — snap in separator, tagline, status
-            # (these print after Live exits)
-
-        # PHASE 5 & 6 — outside Live so they persist cleanly
-        time.sleep(0.05)
-
-    # Below-box elements (always printed, outside Live)
-    sep    = _build_separator(width)
-    tag    = _build_tagline(tagline)
-    status = _build_status(iface, scope, ts)
-
-    console.print(sep)
-    console.print(tag, justify="center")
-    console.print(status, justify="center")
+    t = Text.assemble(
+        ("  wifi_down",  Style(color="color(51)", bold=True)),
+        ("  ◈  ",        Style(color="color(238)")),
+        (ts,             Style(color="color(240)", dim=True)),
+        ("  ◈  ",        Style(color="color(238)")),
+        (iface,          Style(color="color(87)")),
+    )
+    console.print(t)
     console.print()
-
-    # ── New launch screens ────────────────────────────────────────────────────
-    _print_made_by_art()
-    _print_quotes(3)
-    _print_disclaimer()
-    _pulsing_enter_prompt()
-
-    # Clear screen after user presses Enter — big banner only shows once
-    os.system("clear" if os.name == "posix" else "cls")
 
 
 # ─── Menu and section helpers ─────────────────────────────────────────────────

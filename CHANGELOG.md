@@ -5,6 +5,50 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [0.4.6] — 2026-06-11
+
+### Changed
+
+- `modules/banner.py` — complete rewrite; typewriter-first, pure ANSI, no
+  `rich.live.Live` or `rich.panel.Panel`:
+
+  **Removed:**
+  - `MADE_BY_ART` constant and old `_print_made_by_art()` (centered block-letter art)
+  - `_build_static_banner`, `_build_separator`, `_build_tagline`, `_build_status`,
+    `_render_frame` (Live-based banner assembly helpers)
+  - `_compact_banner`, `_noise_row_text`, `_art_row_partial` (noise-border animation)
+  - All phase-based `rich.live.Live` animation (phases 1–5 outer box sweep)
+  - Old `_pulsing_enter_prompt` (replaced by `_print_enter_prompt`)
+  - Old `_print_quotes` (3-quote display → now 1 random quote via `_print_quote`)
+  - Old `_print_disclaimer` (Rich `Panel` version → plain typewriter lines)
+  - `rich.live.Live` and `rich.panel.Panel` imports
+
+  **Added:**
+  - `typewrite(text, style, delay, newline)` — reusable char-by-char printer;
+    converts `style` with `_ansi()`, writes each char with `sys.stdout.write`,
+    flushes after every character.
+  - `_ansi(style_str)` — converts space-separated Rich-style tokens
+    (`bold`, `dim`, `italic`, `color(N)`) to a single ANSI escape sequence.
+  - `_print_art()` — scan-line reveal of `WIFI_DOWN_ART`; 0.04 s delay between
+    rows; tri-zone gradient (`color(51/87/50)`) + `color(45)` corner accent via
+    `_color_row()`.
+  - `_print_made_by()` — right-aligned `── made by  अ म ी  ──` (Devanagari with
+    spaces between aksharas); char-by-char at 0.04 s/char; `"A m i"` ASCII
+    fallback on `UnicodeEncodeError`.
+  - `_print_quote(author, quote)` — single random quote selected by caller;
+    separator `─` lines, `❝` / `❞` wrapping, `color(252) italic` typewriter at
+    0.022 s/char, `color(87) bold` attribution at 0.035 s/char.
+  - `_print_disclaimer()` — plain typewriter lines (no Panel); `color(196) bold`
+    header + 4 `color(252)` body lines at 0.015 s/char; bounded by `─` separators.
+  - `_print_status(iface, scope, ts)` — segment-by-segment ANSI typewriter at
+    0.012 s/char; `color(51)` `◈` diamonds, `color(240) dim` labels,
+    `color(87) bold` values.
+  - `_print_enter_prompt()` — typewriter at 0.045 s/char → 3 full pulse cycles
+    of `color(51)→87→123→87→51` at 150 ms per step (5 colors × 3 cycles = 15
+    transitions) → `input("")` wait → `console.clear()` after Enter.
+
+---
+
 ## [0.4.5] — 2026-06-11
 
 ### Changed
