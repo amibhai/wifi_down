@@ -5,6 +5,50 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [0.4.1] — 2026-06-10
+
+### Changed
+- `modules/banner.py` — full rewrite of the terminal identity module:
+  - **UTF-8 shim** — `_make_console()` wraps `sys.stdout.buffer` in a UTF-8
+    `TextIOWrapper` so `अमी` renders correctly on any Linux terminal; falls
+    back to `"Ami"` on `UnicodeEncodeError` (Windows cp1252 dev machines).
+  - **Hardcoded art constant** — `WIFI_DOWN_ART` (6-row list of strings with
+    box-drawing characters); never regenerated at runtime.
+  - **256-colour palette** — 15 `Style` objects using `color(N)` notation:
+    `color(23)` dim-teal outer box, `color(30)` noise accent, `color(51/87/50)`
+    left/mid/right art gradient, `color(45)` corner accent, `color(213)` credit
+    name, `color(240)` dim metadata text.
+  - **`_color_art_row()`** — splits each row into three equal zones and applies
+    the L→M→R gradient; corner box-drawing chars (`╗╔╝╚╣╠╦╩╬`) receive the
+    `color(45)` accent regardless of zone.
+  - **Static helpers** — `_build_separator()` (`─── ◈ ───`), `_build_tagline()`
+    (`◤ … ◥`), `_build_status()` (`◈ interface … ◈ scope … ◈ session ◈`).
+  - **`_build_static_banner()`** — produces the full 16-line banner as a
+    `list[Text]` without any animation, used when `animate=False`.
+  - **`_compact_banner()`** — narrow-terminal fallback (<90 cols): plain
+    27-char box with `wifi_down` + `made by अमी`; no animation.
+  - **`print_banner()` — 5-phase animation engine** (requires ≥90 col terminal,
+    uses `rich.live.Live` at 120 fps):
+    - **Phase 1** — outer `┌─┐`/`└─┘` box draws left→right/top→bottom at
+      0.003 s/char; side bars appear row by row.
+    - **Phase 2** — top and bottom noise rows fill left→right with `▒→░`
+      flicker (0.001 s flicker, 0.002 s settle per char); art-row `░` side
+      borders appear instantly.
+    - **Phase 3** — column sweep across all 6 art rows simultaneously at
+      0.008 s/column; each column increment reveals the next character in all
+      rows with correct gradient and corner colouring.
+    - **Phase 4** — credit line (`made by अमी`) snaps in right-aligned inside
+      the noise border.
+    - **Phase 5** — separator, tagline, and status bar are printed below the
+      Live block after it closes so they persist cleanly in the scroll buffer.
+  - **Status bar** — now uses `◈` diamonds and reads `iface`, `scope` (auto-
+    detected from `scope.yaml`), and a live session timestamp; previous ANSI
+    f-string status bar removed.
+  - Removed: glow-line animation, `_DIM_CYAN` constant (already fixed in
+    0.4.0-patch), `_TEAL` f-string colour, old `_con` module-level console.
+
+---
+
 ## [0.4.0] — 2026-06-09
 
 ### Added
