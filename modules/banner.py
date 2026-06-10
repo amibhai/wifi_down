@@ -198,18 +198,15 @@ def _print_art() -> None:
 
 
 def _print_made_by() -> None:
-    """Right-aligned 'made by अ म ी' printed char-by-char at 0.04 s/char.
-
-    Uses Devanagari with spaces between aksharas; ASCII fallback 'A m i'.
-    """
+    """Centered 'made by अमी' printed char-by-char at 0.04 s/char."""
     parts_normal = [
         ("── made by ",  "color(240) italic"),
-        ("  अ म ी  ",   "color(213) bold"),
+        ("अमी",          "color(213) bold"),
         (" ──",          "color(240) italic"),
     ]
     parts_fallback = [
         ("── made by ",  "color(240) italic"),
-        ("  A m i  ",    "color(213) bold"),
+        ("Ami",          "color(213) bold"),
         (" ──",          "color(240) italic"),
     ]
 
@@ -222,7 +219,7 @@ def _print_made_by() -> None:
         parts = parts_fallback
 
     width   = console.width
-    padding = max(0, width - len(full))
+    padding = max(0, (width - len(full)) // 2)
     sys.stdout.write(" " * padding)
     sys.stdout.flush()
 
