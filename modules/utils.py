@@ -258,17 +258,26 @@ def run(cmd: list, capture: bool = True, timeout: int = 30) -> subprocess.Comple
 # Interface management
 ###############################################################################
 
+# Robust implementations live in modules/interface.py.
+# enable_monitor_mode raises RuntimeError (with full stdout/stderr) on failure.
+from modules.interface import (  # noqa: E402
+    kill_interfering_processes,
+    enable_monitor_mode,
+    disable_monitor_mode,
+)
+
+
 def get_wireless_interfaces() -> list:
-    """Return list of wireless interface names (managed or monitor mode)."""
+    """Return list of all wireless interface names (managed and monitor mode)."""
     interfaces = []
 
     # Try iw dev first (more reliable)
     result = run(['iw', 'dev'])
     if result.returncode == 0:
         for m in re.finditer(r'Interface\s+(\w+)', result.stdout):
-            ifaces = m.group(1)
-            if ifaces not in interfaces:
-                interfaces.append(ifaces)
+            iface = m.group(1)
+            if iface not in interfaces:
+                interfaces.append(iface)
 
     # Fallback: iwconfig
     if not interfaces:
@@ -284,56 +293,6 @@ def get_wireless_interfaces() -> list:
                         interfaces.append(m2.group(1))
 
     return interfaces
-
-
-def kill_interfering_processes() -> None:
-    info("Killing interfering processes...")
-    result = run(['airmon-ng', 'check', 'kill'])
-    if result.returncode == 0:
-        success("Interfering processes killed.")
-    else:
-        warn("Could not kill all interfering processes (may be fine).")
-
-
-def enable_monitor_mode(interface: str) -> Optional[str]:
-    """Enable monitor mode; return new interface name (e.g. wlan0mon) or None."""
-    logger = logging.getLogger(__name__)
-    info(f"Enabling monitor mode on {interface}...")
-    result = run(['airmon-ng', 'start', interface])
-    output = result.stdout + result.stderr
-    logger.debug("airmon-ng start output: %s", output[:500])
-
-    patterns = [
-        r'monitor mode (?:vif )?enabled (?:for \[\S+\]\S+ )?on \[?(\w+)\]?',
-        r'monitor mode enabled on (\w+)',
-        r'\(mac80211 monitor mode vif enabled.*?on \[?\S*?\]?(\w+mon)\)',
-    ]
-    for pat in patterns:
-        m = re.search(pat, output, re.IGNORECASE)
-        if m:
-            mon = m.group(1)
-            success(f"Monitor mode: {mon}")
-            logger.info("Monitor mode enabled: %s → %s", interface, mon)
-            return mon
-
-    # Fallback: guess
-    guesses = [interface + 'mon', interface.replace('wlan', 'wlan') + 'mon']
-    all_ifaces = get_wireless_interfaces()
-    for g in guesses:
-        if g in all_ifaces:
-            success(f"Monitor mode: {g}")
-            return g
-
-    error(f"Could not determine monitor-mode interface name.")
-    return None
-
-
-def disable_monitor_mode(interface: str) -> None:
-    logger = logging.getLogger(__name__)
-    info(f"Disabling monitor mode on {interface}...")
-    run(['airmon-ng', 'stop', interface])
-    success("Monitor mode disabled.")
-    logger.info("Monitor mode stopped: %s", interface)
 
 
 def set_channel(interface: str, channel: int) -> None:
