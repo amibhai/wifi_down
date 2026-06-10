@@ -597,14 +597,17 @@ def _deauth_capture(
                         limiter=limiter,
                         count=DEAUTH_COUNT,
                     )
-                    # Check immediately -- handshake may already be in the buffer
-                    time.sleep(2)
-                    if _verify_handshake(cap_file, bssid):
-                        handshake_found = True
-                        break
+                    # Poll every second for 8 s — handshake often arrives within 2-3 s
+                    for _ in range(8):
+                        time.sleep(1)
+                        if _verify_handshake(cap_file, bssid):
+                            handshake_found = True
+                            break
+                    if handshake_found:
+                         break
 
                 if not handshake_found:
-                    # Wait for clients to reassociate
+                    # All clients deauthed — give reassociation a final window
                     con.print("[dim cyan]  Waiting for reassociation...[/]")
                     for _ in range(timeout_per_attempt):
                         time.sleep(1)
