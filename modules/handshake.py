@@ -38,7 +38,7 @@ from modules.scope import ScopeManager
 logger = logging.getLogger(__name__)
 
 HANDSHAKE_TIMEOUT_DEFAULT = 120
-DEAUTH_COUNT              = 8       # per-direction, per-client
+DEAUTH_COUNT              = 5       # per-direction, per-client — small burst, repeat fast
 DEAUTH_INTERVAL           = 5
 CAPTURE_DIR               = "captures"
 
@@ -451,7 +451,7 @@ def send_broadcast_deauth_fallback(
     bssid: str,
     monitor_interface: str,
     limiter: DeauthRateLimiter,
-    count: int = 16,
+    count: int = 10,
 ) -> None:
     """Broadcast deauth -- fallback only when no clients are discovered."""
     from rich.console import Console
