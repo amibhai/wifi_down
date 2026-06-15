@@ -28,6 +28,7 @@ import os
 import re
 import sys
 import time
+import traceback
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
@@ -77,11 +78,16 @@ _NEURAL_MODEL: str        = "gpt-4o-mini"
 
 
 def _cleanup() -> None:
-    if state["monitor_interface"]:
+    if state.get("monitor_interface"):
         try:
             disable_monitor_mode(state["monitor_interface"])
-        except Exception:
-            pass
+        except Exception as e:
+            print(
+                f"\n[!] Could not disable monitor mode on "
+                f"{state['monitor_interface']}: {e}\n"
+                f"    Run manually: sudo airmon-ng stop {state['monitor_interface']}",
+                file=sys.stderr,
+            )
 
 
 def _action_check_interface() -> None:
@@ -649,6 +655,7 @@ def launch_prism() -> None:
 ###############################################################################
 
 def _build_parser() -> argparse.ArgumentParser:
+    from wifi_auditor import __version__
     p = argparse.ArgumentParser(
         prog="wifi-auditor",
         description="wifi_down — WiFi Security Auditing Framework — authorized use only",
@@ -665,6 +672,11 @@ Examples:
   wifi-auditor --verify-log                           # verify audit log
   sudo wifi-auditor --prism                           # PRISM TUI (experimental)
 """,
+    )
+    p.add_argument(
+        "--version", "-V",
+        action="version",
+        version=f"wifi-auditor {__version__}",
     )
     p.add_argument("--preflight",    action="store_true",
                    help="Run pre-flight checker and exit")
@@ -852,15 +864,12 @@ def main() -> None:
     _check_first_run()
     check_dependencies()
     scope_label = str(scope_path) if scope_path.exists() else None
-    print_banner(
-        interface=state.get("monitor_interface") or "not set",
-        targets=len(state.get("scan_results") or []),
-        scope_file=scope_label,
-    )
+    print_banner()
 
     import signal
     signal.signal(signal.SIGINT,  lambda s, f: (_cleanup(), sys.exit(0)))
     signal.signal(signal.SIGTERM, lambda s, f: (_cleanup(), sys.exit(0)))
+    signal.signal(signal.SIGHUP,  lambda s, f: (_cleanup(), sys.exit(0)))
 
     while True:
         try:
@@ -884,7 +893,6 @@ def main() -> None:
             warn("Use [0] to exit cleanly.")
         except Exception as exc:
             error(f"Unexpected error: {exc}")
-            import traceback
             traceback.print_exc()
 
 
