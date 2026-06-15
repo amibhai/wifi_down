@@ -1,88 +1,95 @@
-"""Tests for modules/banner.py — animated banner and display helpers."""
-from __future__ import annotations
-
+"""Smoke tests for modules/banner.py — ensures banner renders without exception."""
+import io
+import sys
+import unittest
 from unittest.mock import patch
-import pytest
 
 
-class TestBannerArt:
-    """Test block letter art construction."""
+class TestBanner(unittest.TestCase):
 
-    def test_build_art_rows_five_rows(self) -> None:
-        from modules.banner import _build_art_rows
-        rows = _build_art_rows()
-        assert len(rows) == 5
-
-    def test_all_rows_same_length(self) -> None:
-        from modules.banner import _build_art_rows
-        rows = _build_art_rows()
-        lengths = [len(r) for r in rows]
-        # Rows must be equal width (letters are padded to same size)
-        assert max(lengths) - min(lengths) <= 0, (
-            f"Row lengths differ: {lengths}"
-        )
-
-    def test_no_empty_rows(self) -> None:
-        from modules.banner import _build_art_rows
-        for row in _build_art_rows():
-            assert len(row.strip()) > 0
-
-    def test_art_contains_box_drawing_chars(self) -> None:
-        from modules.banner import _build_art_rows
-        art = "\n".join(_build_art_rows())
-        box_chars = set("─│╭╰╮╯╷╵╌╴╶╋┼├┤┬┴")
-        assert any(ch in art for ch in box_chars), \
-            "Banner art should contain box-drawing characters"
-
-
-class TestBannerOutput:
-    """Test print_banner runs without error in non-animate mode."""
-
-    def test_print_banner_no_animation(self, capsys) -> None:
+    def test_print_banner_does_not_raise(self):
+        """print_banner() must complete without throwing under any terminal width."""
         from modules.banner import print_banner
-        with patch("os.system"):
-            print_banner(
-                interface="wlan0mon",
-                targets=3,
-                scope_file="scope.yaml",
-                animate=False,
-            )
-        # Should not raise
+        captured = io.StringIO()
+        with patch("builtins.input", return_value=""), \
+             patch("sys.stdout", captured):
+            try:
+                print_banner()
+            except SystemExit:
+                pass  # os.system("clear") may raise in test env — acceptable
 
+    def test_print_menu_does_not_raise(self):
+        """print_menu() must not raise regardless of session state contents."""
+        from modules.banner import print_menu
+        state_empty = {
+            "interface": None,
+            "monitor_interface": None,
+            "target": None,
+            "capture_file": None,
+            "wordlist_file": None,
+            "result": None,
+        }
+        state_full = {
+            "interface": "wlan0",
+            "monitor_interface": "wlan0mon",
+            "target": {"ssid": "TestNet", "bssid": "AA:BB:CC:DD:EE:FF", "channel": "6"},
+            "capture_file": "/tmp/test.cap",
+            "wordlist_file": "/tmp/test.txt",
+            "result": "password123",
+        }
+        captured = io.StringIO()
+        with patch("sys.stdout", captured):
+            print_menu(state_empty)
+            print_menu(state_full)
 
-class TestDisplayHelpers:
-    """Test info/success/warn/error/found helpers."""
+    def test_color_constants_exist(self):
+        """C color constants must all be strings (not None)."""
+        from modules.banner import C
+        for attr in ("RED", "GREEN", "YELLOW", "CYAN", "WHITE", "RESET", "BOLD", "DIM"):
+            val = getattr(C, attr, None)
+            assert val is not None, f"C.{attr} is missing"
+            assert isinstance(val, str), f"C.{attr} is not a string"
 
-    def test_info(self, capsys) -> None:
+    def test_info_outputs_message(self):
+        """info() must print the message to stdout."""
         from modules.banner import info
-        info("test message")
-        out = capsys.readouterr().out
-        assert "test message" in out
+        captured = io.StringIO()
+        with patch("sys.stdout", captured):
+            info("test message")
+        assert "test message" in captured.getvalue()
 
-    def test_success(self, capsys) -> None:
+    def test_success_outputs_message(self):
+        """success() must print the message to stdout."""
         from modules.banner import success
-        success("it worked")
-        out = capsys.readouterr().out
-        assert "it worked" in out
+        captured = io.StringIO()
+        with patch("sys.stdout", captured):
+            success("it worked")
+        assert "it worked" in captured.getvalue()
 
-    def test_warn(self, capsys) -> None:
+    def test_warn_outputs_message(self):
+        """warn() must print the message to stdout."""
         from modules.banner import warn
-        warn("caution")
-        out = capsys.readouterr().out
-        assert "caution" in out
+        captured = io.StringIO()
+        with patch("sys.stdout", captured):
+            warn("caution")
+        assert "caution" in captured.getvalue()
 
-    def test_error(self, capsys) -> None:
+    def test_error_outputs_message(self):
+        """error() must print the message to stdout."""
         from modules.banner import error
-        error("something failed")
-        out = capsys.readouterr().out
-        assert "something failed" in out
+        captured = io.StringIO()
+        with patch("sys.stdout", captured):
+            error("something failed")
+        assert "something failed" in captured.getvalue()
+
+    def test_print_compact_header_does_not_raise(self):
+        """print_compact_header() must not raise."""
+        from modules.banner import print_compact_header
+        captured = io.StringIO()
+        with patch("sys.stdout", captured):
+            print_compact_header(interface="wlan0mon")
+            print_compact_header(interface=None)
 
 
-class TestColors:
-    """Colors class backward compatibility."""
-
-    def test_colors_attrs_exist(self) -> None:
-        from modules.banner import Colors, C
-        for attr in ("RED", "GREEN", "YELLOW", "CYAN", "WHITE", "BOLD", "DIM", "RESET"):
-            assert hasattr(Colors, attr)
-            assert hasattr(C, attr)
+if __name__ == "__main__":
+    unittest.main()

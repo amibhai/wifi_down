@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# FROZEN at v0.4.6 — pure ANSI typewriter, no rich.live.Live dependency.
+# Do not rewrite this module without adding/updating tests/test_banner.py first.
 """wifi_down — Terminal Identity Module"""
 from __future__ import annotations
 
