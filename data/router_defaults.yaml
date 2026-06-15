@@ -1,6 +1,24 @@
-# Router vendor default password database
-# Used by modules/oui.py to generate vendor-specific wordlists.
-# {last4mac} is substituted with the last 4 hex chars of the BSSID.
+# router_defaults.yaml — Vendor default password mapping
+# Used by: modules/wordlist.py / modules/oui.py (vendor-specific wordlist generation)
+#
+# Schema version: 1
+# Last updated: 2026-06-15
+# Sources:
+#   - RouterPasswords.com
+#   - Default Router Passwords List (routerpasswords.com)
+#   - Vendor support documentation
+#
+# To update: add entries under vendor_defaults using the format below.
+# Format:
+#   <Vendor Name>:
+#     default_ssid_patterns: [SSID regex/template patterns, {last4mac} is substituted]
+#     passwords: [list of known default passwords, most common first]
+#
+# Schema version history:
+#   v1 — initial schema with default_ssid_patterns + passwords
+
+schema_version: 1
+last_updated: "2026-06-15"
 
 vendor_defaults:
   "TP-Link":
