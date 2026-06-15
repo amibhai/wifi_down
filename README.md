@@ -1,39 +1,30 @@
 # WiFi Auditor
 
+
+
 Automated WiFi security auditing framework. Menu-driven, end-to-end pipeline:
 **scan → WPS probe → WPS attack / handshake capture → wordlist → crack → report.**
 
-> **LEGAL NOTICE** — Use **only** on networks you own or have explicit **written permission** to test.  
-> Unauthorized access is a criminal offence (CFAA, UK Computer Misuse Act, India IT Act 2000, etc.).  
+> **LEGAL NOTICE** — Use **only** on networks you own or have explicit **written permission** to test.
+> Unauthorized access is a criminal offence (CFAA, UK Computer Misuse Act, India IT Act 2000).
 > The authors accept **no liability** for misuse.
 
 ---
 
 ## Features
 
-| Stage | What it does |
-|---|---|
-| **Scanner** | Monitor mode scan via `airodump-ng` with SSID entropy + vendor tags + WPA3 downgrade detection |
-| **WPS Attacks** | Pixie-Dust (offline nonce) / Vendor PIN spray (OUI-matched) / Full brute-force / Wash scan |
-| **Handshake Capture** | Passive / deauth / PMKID — scope-gated and consent-prompted |
-| **Wordlist Generator** | 14 strategies: CUPP-style personal profiling, token pattern builder, smart scenario engine + QoL stats panel |
-| **Pattern Engine** | Token-based custom wordlist builder (`%W/%Y/%s/[abc]/{text}`) with save/reload, estimate, tqdm progress |
-| **Smart Scenario Engine** | 5 real-world profiles (Indian Mobile User, Corporate, Student, Consumer, Custom) sorted by breach frequency |
-| **Cracker** | `aircrack-ng` + `cowpatty` + `hashcat` dict + `hashcat` rule-based (best64, d3ad0ne, dive…) |
-| **WEP Cracker** | ARP replay / fragmentation / ChopChop pipelines |
-| **Deauth Attack** | Rate-limited, consent-required, scope-enforced |
-| **Smart Sequencer** | WPS-aware ranking: WPS unlocked → score 95, PMKID → 90, deauth → 75 |
-| **Full Auto Mode** | Scan → WPS probe → WPS path OR handshake path → wordlist → crack |
-| **Pentest Reports** | Markdown + JSON + HTML, SHA-256 evidence, HMAC-chained audit log |
-| **Phantom AP** | Rogue AP Signal Shadowing — beacon-identical clone, 3 personalities, vendor-matched captive portal |
-| **Signal Intercept** | Post-Phantom bettercap pipeline — live protocol fingerprinting with severity ratings |
-| **Beacon Historian** | Passive behavioral profiling — IE change detection, probe collection, stability score 0–100 |
-| **Neural Pathfinder** | OpenAI-powered structured attack planner — JSON output, privacy filter, rule-based fallback |
-| **Ghost Signal Tracker** | Parallel CVE queries (NVD + RouterSploit + Shodan) with 7-day SQLite cache |
-| **PRISM Dashboard** | Textual TUI — 3-panel live view (`--prism`), opt-in |
-| **Temporal Attack Engine** | Vendor PSK algorithm database — MAC/timestamp offline wordlist generation |
-| **PDF Report Engine** | reportlab primary / weasyprint fallback — 4-page report with NIST 800-153 checklist |
-| **Multi-language UI** | i18n with auto-detect: en, es, fr, ar, hi, zh (`--lang LANG`) |
+| Stage                  | What it does                                                                                    |
+| ---------------------- | ----------------------------------------------------------------------------------------------- |
+| **Scanner**            | Monitor-mode scan via `airodump-ng` — SSID entropy + vendor tags + WPA3 downgrade detection     |
+| **WPS Attacks**        | Pixie-Dust / Vendor PIN spray (OUI-matched, 26 vendors) / Full brute-force / Wash scan          |
+| **Handshake Capture**  | Passive / deauth / PMKID — three parallel engines, scope-gated, consent-prompted                |
+| **Wordlist Generator** | 14 strategies — vendor defaults, CUPP-style personal profiling, custom pattern builder          |
+| **Cracker**            | `aircrack-ng` + `cowpatty` + `hashcat` dict + `hashcat` rule-based (best64, d3ad0ne, dive…)     |
+| **WEP Cracker**        | ARP replay / fragmentation / ChopChop pipelines                                                 |
+| **Deauth Attack**      | Rate-limited (token bucket), consent-required, scope-enforced                                   |
+| **Smart Sequencer**    | WPS-aware ranking: WPS unlocked → 95, PMKID → 90, deauth → 75                                   |
+| **Full Auto Mode**     | Scan → WPS probe → WPS path OR handshake path → wordlist → crack (unattended)                   |
+| **Pentest Reports**    | Markdown + JSON + HTML, SHA-256 evidence hashes, HMAC-chained audit log                         |
 
 ---
 
@@ -42,20 +33,11 @@ Automated WiFi security auditing framework. Menu-driven, end-to-end pipeline:
 ```bash
 git clone https://github.com/amibhai/wifi_down.git
 cd wifi_down
-sudo ./install.sh          # detects OS, installs deps, creates venv
-sudo wifi-auditor --preflight   # verify everything is ready
-sudo wifi-auditor          # launch interactive menu
+sudo ./install.sh             # detects OS, installs deps, creates venv
+sudo wifi-auditor --preflight # verify everything is ready
+sudo wifi-auditor --version   # confirm version
+sudo wifi-auditor             # launch interactive menu
 ```
-
-> [!NOTE]
-> **Terminal requirements for the animated banner:**
-> - **Width ≥ 90 columns** — narrower terminals show a compact fallback (no animation, no ASCII art).
-> - **UTF-8 locale** (`LANG=en_US.UTF-8` or equivalent) — required for box-drawing characters and
->   the `अमी` credit. Kali/Parrot ship UTF-8 by default. Windows cp1252 terminals show `Ami`.
-> - **256-colour support** — the banner uses `color(N)` ANSI 256-colour codes. Most modern terminal
->   emulators (kitty, alacritty, GNOME Terminal, iTerm2) support this automatically.
-> - Run `echo $TERM` and confirm it shows `xterm-256color` or similar; if not, export it before
->   launching.
 
 ---
 
@@ -69,41 +51,38 @@ sudo ./install.sh
 
 The script auto-detects your OS and uses the correct package manager:
 
-| OS | Package manager |
-|---|---|
-| Kali / Parrot / Ubuntu 22+ / Debian | `apt` |
-| Arch / Manjaro | `pacman` (+ AUR warning for hcxtools) |
-| Fedora / RHEL / Rocky | `dnf` (hcxdumptool built from source) |
+| OS                                   | Package manager                       |
+| ------------------------------------ | ------------------------------------- |
+| Kali / Parrot / Ubuntu 22+ / Debian  | `apt`                                 |
+| Arch / Manjaro                       | `pacman` (+ AUR warning for hcxtools) |
+| Fedora / RHEL / Rocky                | `dnf` (hcxdumptool built from source) |
 
-After install, a Python venv is created at `~/.wifi-auditor/venv` and a launcher at `/usr/local/bin/wifi-auditor`.
+After install, a Python venv is created at `~/.wifi-auditor/venv` and a launcher
+at `/usr/local/bin/wifi-auditor`.
 
-At the end of `install.sh`, the new `run_first_preflight()` function:
-1. Calls `_ensure_tool` for every optional/WPS binary (`reaver`, `wash`, `bully`, `cowpatty`, `hashcat`, `crunch`, `macchanger`) and gap-closer tools (`hostapd`, `dnsmasq`, `nginx`, `curl`) — installing any that are missing via the already-selected package manager.
-2. Installs `bettercap` via `_install_bettercap()` (apt on Kali/Parrot/Debian/Ubuntu, pacman on Arch; warns with install URL on unsupported distros).
-3. Installs leapfrog Python packages (`reportlab`, `textual`, `openai`, `httpx`) into the venv.
-4. Sources the Python venv and runs `run_preflight_with_autofix()` (two-pass: show table → auto-install stragglers → re-show table).
-5. Writes the sentinel `~/.wifi-auditor/.preflight_done` (both from Python and from bash — belt-and-suspenders).
+`install.sh` also runs `run_first_preflight()` which:
+1. Calls `_ensure_tool` for every optional binary (`reaver`, `wash`, `bully`, `cowpatty`, `hashcat`, `crunch`, `macchanger`) — installing any that are missing.
+2. Sources the venv and runs `run_preflight_with_autofix()` (two-pass: show table → auto-install → re-show table).
+3. Writes the sentinel `~/.wifi-auditor/.preflight_done` (both bash and Python — belt-and-suspenders).
 
 ### Manual
 
 ```bash
-sudo apt-get install aircrack-ng hcxdumptool hcxtools hashcat crunch macchanger iw \
-     reaver bully wash cowpatty
+sudo apt-get install aircrack-ng hcxdumptool hcxtools hashcat crunch \
+     macchanger iw reaver bully wash cowpatty
 pip install -r requirements.txt
 ```
 
-> [!NOTE]
-> If you skip `install.sh`, the sentinel will be absent. The **first** `sudo wifi-auditor` launch
-> will automatically detect this and run `run_preflight_with_autofix()` for you. All subsequent
-> starts are instant — the sentinel check is a single `Path.exists()` call.
+> If you skip `install.sh`, the sentinel will be absent. The **first** `sudo wifi-auditor`
+> launch auto-runs `run_preflight_with_autofix()`. All subsequent starts are instant.
 
 ---
 
 ## Auto-Setup & First-Run Flow
 
 WiFi Auditor uses a sentinel file (`~/.wifi-auditor/.preflight_done`) to ensure the full
-dependency check runs **exactly once** — either at the end of `install.sh` or on the very first
-manual launch — and never again slows startup after that.
+dependency check runs **exactly once** — either at the end of `install.sh` or on the very
+first manual launch — and never again slows startup.
 
 ```
 sudo ./install.sh
@@ -112,14 +91,11 @@ sudo ./install.sh
   ├─ create /usr/local/bin/wifi-auditor
   └─ run_first_preflight()
        ├─ _ensure_tool reaver / wash / bully / cowpatty / ...
-       │    └─ if missing → apt-get install -y <pkg>  (auto)
-       ├─ _ensure_tool hostapd / dnsmasq / nginx / curl
-       ├─ _install_bettercap()  (apt/pacman/warn)
-       ├─ pip install reportlab textual openai httpx
+       │    └─ if missing → install automatically
        ├─ source venv → run_preflight_with_autofix()
-       │    ├─ Pass 1 : display full dependency table
+       │    ├─ Pass 1: display full dependency table
        │    ├─ auto_install_missing() → installs anything still absent
-       │    ├─ Pass 2 : re-display table confirming everything fixed
+       │    ├─ Pass 2: re-display table confirming everything fixed
        │    └─ write ~/.wifi-auditor/.preflight_done
        └─ sentinel also written by bash (belt-and-suspenders)
 
@@ -129,11 +105,11 @@ Next launch:  sudo wifi-auditor
   ├─ check_dependencies()
   └─ print_banner() → menu
 
-Manual install path (no install.sh):
-  First  sudo wifi-auditor
+Manual install (no install.sh):
+  First sudo wifi-auditor
   ├─ _check_first_run()  →  no sentinel
   ├─ run_preflight_with_autofix()  (same two-pass flow)
-  └─ sentinel written → all future starts are instant
+  └─ sentinel written → all future starts instant
 
 Manual re-check at any time:
   sudo wifi-auditor --preflight   ← always works, never writes sentinel
@@ -141,21 +117,19 @@ Manual re-check at any time:
 
 ### Sentinel details
 
-| Path | `~/.wifi-auditor/.preflight_done` |
-|---|---|
-| Created by | `install.sh` (bash `touch`) AND `run_preflight_with_autofix()` (Python `Path.touch()`) |
-| Effect when present | `_check_first_run()` in `cli.py` returns immediately |
-| Delete to re-trigger | `rm ~/.wifi-auditor/.preflight_done` then `sudo wifi-auditor` |
-| Does `--preflight` write it? | **No** — `--preflight` is always a fresh check |
+| Path                        | `~/.wifi-auditor/.preflight_done`                                                       |
+| --------------------------- | --------------------------------------------------------------------------------------- |
+| Created by                  | `install.sh` (bash `touch`) AND `run_preflight_with_autofix()` (Python `Path.touch()`) |
+| Effect when present         | `_check_first_run()` in `cli.py` returns immediately                                    |
+| Delete to re-trigger        | `rm ~/.wifi-auditor/.preflight_done` then `sudo wifi-auditor`                           |
+| Does `--preflight` write it?| **No** — `--preflight` is always a fresh check                                          |
 
 ---
 
 ## Docker
 
-### Build and run
-
 ```bash
-# Build the image (Kali base)
+# Build (Kali base)
 docker build -t wifi-auditor .
 
 # Interactive menu
@@ -179,56 +153,34 @@ devices:
   - /dev/bus/usb:/dev/bus/usb
 ```
 
-If the adapter doesn't appear: check `lsusb` on the host; ensure the kernel driver (e.g. `rtl8812au-dkms`) is loaded on the **host** (Docker passes the device, not the driver).
+If the adapter doesn't appear: check `lsusb` on the host; ensure the kernel driver
+(e.g. `rtl8812au-dkms`) is loaded on the **host** — Docker passes the device, not the driver.
 
 ---
 
 ## Pre-flight Checker
 
-Run a manual dependency check at any time:
-
 ```bash
 sudo wifi-auditor --preflight
 ```
 
-This **always** performs a fresh check and **never** writes the sentinel, so it is safe to use for
-diagnostics without affecting the auto-setup flow.
+Always performs a fresh check. Never writes the sentinel.
 
 ### What is checked
 
-| Tool | Required | Purpose |
-|---|---|---|
-| python ≥ 3.10 | YES | Runtime |
-| airmon-ng, airodump-ng, aireplay-ng, aircrack-ng | YES | Core capture + crack |
-| iw, ip | YES | Interface management |
-| hcxdumptool, hcxpcapngtool | opt | PMKID capture + .cap→hc22000 conversion |
-| hashcat | opt | GPU cracking |
-| crunch | opt | Brute-force wordlist generation |
-| macchanger | opt | MAC randomisation |
-| **reaver** | opt | WPS Pixie-Dust + PIN brute-force |
-| **wash** | opt | WPS AP discovery (ships with reaver package) |
-| **bully** | opt | WPS alternate backend |
-| **cowpatty** | opt | PMK-cache optimised cracking |
-| **hostapd** | opt | Phantom AP — rogue AP daemon |
-| **dnsmasq** | opt | Phantom AP — DNS/DHCP for captive portal |
-| **nginx** | opt | Phantom AP — reverse proxy for portal |
-| **bettercap** | opt | Signal Intercept — protocol fingerprinting pipeline |
-
-### auto_install_missing()
-
-When called from `run_preflight_with_autofix()`, this function:
-1. Detects the package manager (`apt-get`, `pacman`, or `dnf`).
-2. Deduplicates packages — `airmon-ng`, `airodump-ng`, `aireplay-ng`, and `aircrack-ng` all map to the `aircrack-ng` package; `wash` maps to `reaver` since they ship together.
-3. Runs the install command for each unique package.
-4. Reports success/failure per package.
-
-```
-Package mapping examples (TOOL_PACKAGES):
-  airmon-ng, airodump-ng, aireplay-ng, aircrack-ng → aircrack-ng
-  wash                                              → reaver  (same package)
-  hcxpcapngtool                                     → hcxtools
-  ip                                                → iproute2 (apt) / iproute (dnf)
-```
+| Tool                                              | Required | Purpose                                     |
+| ------------------------------------------------- | -------- | ------------------------------------------- |
+| python ≥ 3.10                                     | YES      | Runtime                                     |
+| airmon-ng, airodump-ng, aireplay-ng, aircrack-ng  | YES      | Core capture + crack                        |
+| iw, ip                                            | YES      | Interface management                        |
+| hcxdumptool, hcxpcapngtool                        | opt      | PMKID capture + `.cap` → `.hc22000`         |
+| hashcat                                           | opt      | GPU cracking                                |
+| crunch                                            | opt      | Brute-force wordlist generation             |
+| macchanger                                        | opt      | MAC randomisation                           |
+| reaver                                            | opt      | WPS Pixie-Dust + PIN brute-force            |
+| wash                                              | opt      | WPS AP discovery (ships with reaver)        |
+| bully                                             | opt      | WPS alternate backend                       |
+| cowpatty                                          | opt      | PMK-cache optimised cracking                |
 
 ### Example output
 
@@ -237,275 +189,231 @@ Package mapping examples (TOOL_PACKAGES):
 ║      WiFi Auditor -- Pre-Flight      ║
 ╚══════════════════════════════════════╝
 
-┌──────────────────┬───────┬─────────────┬───────┬──────────────────────────────────────┐
-│ Tool             │ Found │ Version     │ Req'd │ Status                               │
-├──────────────────┼───────┼─────────────┼───────┼──────────────────────────────────────┤
-│ python           │  OK   │ 3.11.2      │  YES  │ OK (>=3.10)                          │
-│ airmon-ng        │  OK   │ 1.7         │  YES  │ OK                                   │
-│ airodump-ng      │  OK   │ 1.7         │  YES  │ OK                                   │
-│ aireplay-ng      │  OK   │ 1.7         │  YES  │ OK                                   │
-│ aircrack-ng      │  OK   │ 1.7         │  YES  │ OK (>=1.7)                           │
-│ iw               │  OK   │ 5.19        │  YES  │ OK                                   │
-│ ip               │  OK   │ 5.18        │  YES  │ OK                                   │
-│ hcxdumptool      │  OK   │ 6.2.7       │  opt  │ OK                                   │
-│ hcxpcapngtool    │  OK   │ 6.2.7       │  opt  │ OK                                   │
-│ hashcat          │  OK   │ 6.2.6       │  opt  │ OK                                   │
-│ crunch           │  OK   │ 3.6         │  opt  │ OK                                   │
-│ macchanger       │  OK   │ 1.7.0       │  opt  │ OK                                   │
-│ reaver           │  OK   │ 1.6.6       │  opt  │ OK                                   │
-│ wash             │  OK   │ 1.6.6       │  opt  │ OK                                   │
-│ bully            │  OK   │ 1.4         │  opt  │ OK                                   │
-│ cowpatty         │  OK   │ 4.8         │  opt  │ OK                                   │
-└──────────────────┴───────┴─────────────┴───────┴──────────────────────────────────────┘
-
-┌──────────────┬──────────────┬──────────────┬─────┐
-│ Interface    │ Monitor Mode │ In /proc/net │ Inj │
-├──────────────┼──────────────┼──────────────┼─────┤
-│ wlan0mon     │     yes      │     yes      │ yes │
-└──────────────┴──────────────┴──────────────┴─────┘
+┌──────────────────┬───────┬─────────────┬───────┬──────────────────────┐
+│ Tool             │ Found │ Version     │ Req'd │ Status               │
+├──────────────────┼───────┼─────────────┼───────┼──────────────────────┤
+│ python           │  OK   │ 3.11.2      │  YES  │ OK (>=3.10)          │
+│ airmon-ng        │  OK   │ 1.7         │  YES  │ OK                   │
+│ hcxdumptool      │  OK   │ 6.2.7       │  opt  │ OK                   │
+│ reaver           │  OK   │ 1.6.6       │  opt  │ OK                   │
+│ wash             │  OK   │ 1.6.6       │  opt  │ OK                   │
+│ cowpatty         │  OK   │ 4.8         │  opt  │ OK                   │
+└──────────────────┴───────┴─────────────┴───────┴──────────────────────┘
 
 ✓ All pre-flight checks passed. Ready to audit.
 ```
 
 ---
 
-## scope.yaml Format
+## scope.yaml
 
-Create `scope.yaml` before running any attack (required for frame injection):
+> `scope.yaml` is **gitignored**. Copy the template to get started:
+
+```bash
+cp scope.yaml.example scope.yaml
+wifi-auditor --scope-wizard   # interactive builder with 6-point checklist
+```
+
+`scope.yaml.example` format:
 
 ```yaml
 authorized_targets:
   - bssid: "AA:BB:CC:DD:EE:FF"
-    ssid: "HomeNetwork"
-    authorized_by: "John Doe (owner)"
-    valid_until: "2026-12-31"
-    notes: "Written email from owner dated 2026-06-01"
+    ssid: "YourNetworkName"
+    authorized_by: "Full Name (relationship: owner / written-permission)"
+    valid_until: "YYYY-MM-DD"
+    notes: "Source of authorization: e.g. written email dated YYYY-MM-DD"
 ```
-
-Use the interactive wizard to build it:
-
-```bash
-wifi-auditor --scope-wizard
-```
-
-The wizard displays a 6-point authorization checklist and requires explicit confirmation before adding any target.
 
 ### Scope enforcement rules
 
-| Operation | Scope required |
-|---|---|
-| Network scan (passive) | No |
-| WPS wash scan | No |
-| Passive handshake capture | Warning only |
-| Deauth attack | **Hard block** |
-| PMKID capture | **Hard block** |
-| WEP injection attacks | **Hard block** |
-| **WPS Pixie-Dust / PIN attack** | **Hard block** |
+| Operation                        | Scope required  |
+| -------------------------------- | --------------- |
+| Network scan (passive)           | No              |
+| WPS wash scan                    | No              |
+| Passive handshake capture        | Warning only    |
+| Deauth attack                    | **Hard block**  |
+| PMKID capture                    | **Hard block**  |
+| WEP injection attacks            | **Hard block**  |
+| WPS Pixie-Dust / PIN attack      | **Hard block**  |
 
 ---
 
 ## WPS Attack Module
 
-WiFi Auditor includes a full WPS attack suite in `modules/wps.py`.
+Full WPS attack suite in `modules/wps.py` (741 lines).
 
-### Attack Modes
+### Attack modes
 
-| Mode | Description | Backend |
-|---|---|---|
-| **[1] Pixie-Dust** | Offline nonce recovery — cracks vulnerable APs in <30 s | reaver `-K 1` or bully `--pixie` |
-| **[2] Vendor PIN Spray** | OUI-matched vendor defaults first, then 30 common PINs | reaver / bully `-p PIN` |
-| **[3] Full PIN Brute-Force** | All ~11,000 valid WPS PINs with configurable delay + lock-wait | reaver (resumable state) |
-| **[4] Wash Scan** | Passive WPS beacon discovery — shows locked/unlocked status | wash |
+| Mode                          | Description                                                 | Backend                           |
+| ----------------------------- | ----------------------------------------------------------- | --------------------------------- |
+| **[1] Pixie-Dust**            | Offline nonce recovery — cracks vulnerable APs in <30 s     | `reaver -K 1` or `bully --pixie`  |
+| **[2] Vendor PIN Spray**      | OUI-matched vendor defaults first, then 30 common PINs      | `reaver` / `bully -p PIN`         |
+| **[3] Full PIN Brute-Force**  | All ~11,000 valid WPS PINs, configurable delay + lock-wait  | `reaver` (resumable state)        |
+| **[4] Wash Scan**             | Passive WPS beacon discovery — shows locked/unlocked        | `wash`                            |
 
-### OUI Vendor PIN Database (26 entries)
+### OUI vendor PIN database (26 entries)
 
-The Vendor PIN Spray mode looks up the first 6 hex characters of the target BSSID against a built-in table of known default WPS PINs:
+| Vendor         | OUI prefix examples                              |
+| -------------- | ------------------------------------------------ |
+| Belkin         | `00265A`, `94103E`, `001882`                     |
+| Tenda          | `C83A35`, `F8D111`                               |
+| TP-Link        | `1C3950`, `50C7BF`, `D8EB97`, `EC172F`, `6045CB` |
+| D-Link         | `001CF0`, `144D67`, `1CAFF7`                     |
+| Netgear        | `001422`, `20E52A`, `C0FF28`                     |
+| Huawei         | `B0487A`, `48AD08`                               |
+| ZyXEL          | `74DADA`                                         |
+| Linksys/Cisco  | `001217`, `002275`, `001D7E`                     |
+| Asus           | `A8B1D4`, `04D4C4`                               |
+| Buffalo        | `706F81`                                         |
+| Motorola       | `0018E7`                                         |
 
-| Vendor | OUI examples |
-|---|---|
-| Belkin | `00265A`, `94103E`, `001882` |
-| Tenda | `C83A35`, `F8D111` |
-| TP-Link | `1C3950`, `50C7BF`, `D8EB97`, `EC172F`, `6045CB` |
-| D-Link | `001CF0`, `144D67`, `1CAFF7` |
-| Netgear | `001422`, `20E52A`, `C0FF28` |
-| Huawei | `B0487A`, `48AD08` |
-| ZyXEL | `74DADA` |
-| Linksys/Cisco | `001217`, `002275`, `001D7E` |
-| Asus | `A8B1D4`, `04D4C4` |
-| Buffalo | `706F81` |
-| Motorola | `0018E7` |
+### Automatic WPS probe
 
-If no vendor match is found, falls back to 30 common PINs (from public research).
-
-### Automatic WPS Probe
-
-After every target is selected (scan or full-auto), the tool runs a **6-second passive wash scan** on the target's channel:
+After every target selection, a **6-second passive wash scan** runs automatically:
 
 ```
 Probing WPS capability (6 s wash scan)...
 ✓ WPS v2.0 detected on AA:BB:CC:DD:EE:FF  [unlocked]
 ```
 
-The result annotates the target dict (`wps_enabled`, `wps_locked`, `wps_version`) and is fed into the Smart Sequencer.
+The result annotates the target dict (`wps_enabled`, `wps_locked`, `wps_version`)
+and feeds into the Smart Sequencer.
 
-### Full Auto WPS Routing
+### Full Auto WPS routing
 
 ```
-Scan → Select target → Auto WPS probe (6s wash)
-                             ↓
-                 WPS enabled & unlocked?
-                 YES  → Pixie-Dust first (mode 1) → PIN spray fallback
-                 LOCKED → PMKID path (WPS PIN attacks blocked)
-                 NO   → Handshake → Wordlist → Crack
-```
-
-### Example
-
-```bash
-# Launch WPS menu from interactive session
-[w] WPS Attack
-
-# Or jump straight to WPS in headless mode
-sudo wifi-auditor --fast --interface wlan0mon
-# Then select [w] from the menu
+Scan → Select target → Auto WPS probe (6 s wash)
+                              ↓
+                  WPS enabled & unlocked?
+                  YES    → Pixie-Dust → PIN spray fallback
+                  LOCKED → PMKID path (WPS PIN attacks deprioritised)
+                  NO     → Handshake → Wordlist → Crack
 ```
 
 ---
 
 ## Cracking Engine
 
-`cracker_menu()` now offers **4 backends** for WPA handshakes and PMKID hashes:
+Four backends for WPA handshakes and PMKID hashes:
 
 ```
-  Cracking Backend:
-  [1] aircrack-ng   – fast dict attack, GPU optional
-  [2] cowpatty      – PMK-cache optimised (needs SSID)
-  [3] hashcat dict  – GPU-accelerated, auto-converts .cap → hc22000
-  [4] hashcat rules – dict + rule mutations (best64, d3ad0ne, dive…)
+[1] aircrack-ng   — fast dict attack
+[2] cowpatty      — PMK-cache optimised (auto-passes SSID from session)
+[3] hashcat dict  — GPU-accelerated, auto-converts .cap → .hc22000
+[4] hashcat rules — dict + rule mutations (best64, d3ad0ne, dive…)
 ```
 
-### hashcat Rule-Based Cracking
+### hashcat rule-based cracking
 
-Rule files are auto-discovered from standard paths (`/usr/share/hashcat/rules/`, etc.) and displayed with line counts:
+Rule files are auto-discovered and shown with line counts:
 
 ```
-  Available rule files:
-  [1] best64           (77 rules)    /usr/share/hashcat/rules/best64.rule
-  [2] d3ad0ne          (34,096 rules) /usr/share/hashcat/rules/d3ad0ne.rule
-  [3] dive             (99,089 rules) /usr/share/hashcat/rules/dive.rule
-  [4] rockyou-30000    (30,000 rules)
-  [5] toggles1         (9,000 rules)
-  [0] Enter custom path
+[1] best64        (77 rules)
+[2] d3ad0ne       (34,096 rules)
+[3] dive          (99,089 rules)
+[4] rockyou-30000 (30,000 rules)
+[5] toggles1      (9,000 rules)
+[0] Enter custom path
 ```
 
-A 10,000-word list + `best64` generates ~640,000 candidates — covering character substitutions, appended digits, and capitalisation patterns used by most humans for Wi-Fi passwords.
+### `.cap` → `.hc22000` conversion
 
-### cowpatty
-
-```bash
-cowpatty -r capture.cap -f wordlist.txt -s "MySSID"
-```
-
-cowpatty pre-computes the PMK (PBKDF2-HMAC-SHA1) once per password, making it faster than aircrack-ng for repeated cracking against the same SSID. WiFi Auditor auto-passes the SSID from the session state.
-
-### .cap → hc22000 Conversion
-
-Backends 3 and 4 automatically call `hcxpcapngtool` to convert `.cap` → `.hc22000` before running hashcat. Falls back to aircrack-ng gracefully if `hcxtools` is not installed.
+Backends 3 and 4 call `hcxpcapngtool` automatically. Falls back to aircrack-ng
+gracefully if `hcxtools` is not installed.
 
 ---
 
 ## WPA3 SAE Downgrade Detection
 
-`scanner.py` now classifies each AP's security tier and flags **transition-mode** APs that advertise both WPA3 and WPA2 — a downgrade attack surface:
-
-| SECURITY column | Meaning |
-|---|---|
-| `WPA3-SAE` (green) | WPA3-only — SAE handshake, no downgrade |
-| `WPA3/WPA2` + `↓SAE` (yellow) | Transition mode — WPA2 clients still accepted |
-| `WPA2` (white) | Standard WPA2-PSK |
-| `WEP` (red) | Critically weak — instant crack |
-
-The `↓SAE` flag in the scan table helps you identify APs where a downgrade attack may be feasible before selecting a target.
+| SECURITY column                 | Meaning                                        |
+| ------------------------------- | ---------------------------------------------- |
+| `WPA3-SAE` (green)              | WPA3-only — SAE handshake, no downgrade        |
+| `WPA3/WPA2` + `↓SAE` (yellow)   | Transition mode — WPA2 clients still accepted  |
+| `WPA2` (white)                  | Standard WPA2-PSK                              |
+| `WEP` (red)                     | Critically weak — instant crack                |
 
 ---
 
 ## Smart Attack Sequencer
 
-The sequencer scores each discovered AP and generates a **ranked attack plan** before touching the target. Scores are now WPS-aware:
+WPS-aware scoring before touching any target:
 
 ```
-Scoring factors:
-  • WEP detected                   → score 100  (instant win)
-  • WPS unlocked (Pixie-Dust)      → score 95   ← new
-  • WPS unlocked (PIN spray)       → score 92   ← new
-  • PMKID capable / 0 clients      → score 90
-  • WPS locked (Pixie-Dust only)   → score 70   ← new (PIN futile)
-  • Deauth viable                  → score 75 + min(clients×3, 15)
-  • Weak signal (<-75 dBm)         → deauth score −25
-  • Vendor known                   → wordlist_strategy = vendor_defaults
-  • All-numeric SSID               → wordlist_strategy = phone_numbers
-  • Default SSID tag               → vendor_defaults high-confidence flag
-  • Passive fallback               → score 20  (always appended)
+WEP detected                   → score 100  (instant win)
+WPS unlocked (Pixie-Dust)      → score  95
+WPS unlocked (PIN spray)       → score  92
+PMKID capable / 0 clients      → score  90
+Deauth viable                  → score  75 + min(clients×3, 15)
+WPS locked (Pixie-Dust only)   → score  70  (PIN futile)
+Weak signal (<−75 dBm)         → deauth score −25
+Passive fallback               → score  20  (always appended)
 ```
+
+---
+
+## Handshake Capture — Three Parallel Engines
+
+`modules/handshake.py` runs three engines simultaneously from capture start:
+
+| Engine | Method | Details |
+| ------ | ------ | ------- |
+| 1 | airodump-ng file watcher | polls `.cap` every 0.5 s; verifies with aircrack-ng, cowpatty, tshark |
+| 2 | scapy AsyncSniffer | captures EAPOL frames in-memory; BPF `ether proto 0x888e`; zero disk dependency |
+| 3 | hcxdumptool PMKID | runs passively alongside deauth from the start; checks for `.hc22000` every 2 s |
+
+Deauth pipeline: Phase 1 — targeted unicast (top-2 clients, both directions) → Phase 2 — broadcast fallback → Phase 3 — PMKID wait (90 s).
 
 ---
 
 ## CLI Reference
 
 ```
-wifi-auditor --preflight              Pre-flight dependency check
-wifi-auditor --scope-wizard           Interactive scope.yaml builder
-wifi-auditor --scope FILE             Load specific scope file (default: ./scope.yaml)
-wifi-auditor --headless               Non-interactive automated mode
-wifi-auditor --target BSSID           Target for headless mode
-wifi-auditor --auto                   Alias for --headless
-wifi-auditor --interface IFACE        Force specific wireless interface
-wifi-auditor --deauth-limit N         Max deauth bursts/min (default 5, max 20)
-wifi-auditor --report SESSION_ID      Generate Markdown + JSON pentest report
-wifi-auditor --pdf                    Also produce a PDF report (requires reportlab or weasyprint)
-wifi-auditor --prism                  Launch PRISM TUI dashboard (requires textual)
-wifi-auditor --no-tui                 Force plain-text output even if textual is installed
-wifi-auditor --lang LANG              UI language: en es fr ar hi zh
-wifi-auditor --neural-model MODEL     OpenAI model for Neural Pathfinder (default: gpt-4o-mini)
-wifi-auditor --verify-log             Verify HMAC-chained audit log integrity
-wifi-auditor --refresh-oui            Re-download IEEE OUI database
-wifi-auditor --debug                  Enable DEBUG logging to console
-wifi-auditor --fast                   Lab/CTF mode: skip scope+consent (red warning shown)
+wifi-auditor --version              Print version and exit
+wifi-auditor --preflight            Pre-flight dependency check
+wifi-auditor --scope-wizard         Interactive scope.yaml builder
+wifi-auditor --scope FILE           Load specific scope file (default: ./scope.yaml)
+wifi-auditor --headless             Non-interactive automated mode
+wifi-auditor --target BSSID         Target for headless mode
+wifi-auditor --auto                 Alias for --headless
+wifi-auditor --interface IFACE      Force specific wireless interface
+wifi-auditor --check-interface      Diagnose interface / monitor-mode issues and exit
+wifi-auditor --deauth-limit N       Max deauth bursts/min (default 5, max 20)
+wifi-auditor --report SESSION_ID    Generate Markdown + JSON pentest report
+wifi-auditor --verify-log           Verify HMAC-chained audit log integrity
+wifi-auditor --refresh-oui          Re-download IEEE OUI database
+wifi-auditor --debug                Enable DEBUG logging to console
+wifi-auditor --fast                 Lab/CTF mode: skip scope+consent (red warning shown)
 ```
 
-### Interactive Menu Keys
+### Interactive menu keys
 
 ```
 [1]  Set interface + enable monitor mode
-[2]  Scan networks (+ auto WPS probe)
+[2]  Scan networks  (+ auto WPS probe after selection)
 [3]  Capture handshake / PMKID
 [4]  Generate wordlist
-[5]  Crack (aircrack / cowpatty / hashcat dict / hashcat rules)
-[6]  Full Auto (scan → WPS or handshake → wordlist → crack)
+[5]  Crack  (aircrack / cowpatty / hashcat dict / hashcat rules)
+[6]  Full Auto  (scan → WPS probe → WPS or handshake → wordlist → crack)
 [7]  WEP attack pipeline
 [8]  Show session state
 [9]  Deauth attack
-[w]  WPS attack (Pixie-Dust / PIN spray / brute-force / wash scan)
-[p]  Phantom AP (Signal Shadowing — 3 personalities, captive portal)
-[I]  Signal Intercept (post-Phantom bettercap pipeline)
-[h]  Beacon Historian (passive behavioral profiling)
-[N]  Neural Pathfinder (OpenAI attack planner)
-[g]  Ghost Signal Tracker (CVE / RouterSploit / Shodan)
-[t]  Temporal Attack Engine (vendor PSK wordlist generation)
+[w]  WPS attack  (Pixie-Dust / PIN spray / brute-force / Wash scan)
 [0]  Exit
 ```
 
-### --fast Lab Mode
+### `--fast` lab mode
 
 ```bash
 sudo wifi-auditor --fast
 ```
 
-Disables scope.yaml enforcement and consent prompts. Intended for **isolated lab environments / CTF** only. A bold red warning panel is displayed at startup and before every injection. All actions are still logged with `scope_bypassed=True`.
+Disables scope.yaml enforcement and consent prompts. Intended for **isolated lab /
+CTF environments only**. A bold red warning panel is displayed at startup and before
+every injection. All actions are still logged with `scope_bypassed=True`.
 
-> [!WARNING]
-> `--fast` does **not** make the tool anonymous or legal. It only removes the interactive consent
-> gates. Use exclusively on networks you own.
+> **Warning:** `--fast` does **not** make the tool anonymous or legal. Use exclusively
+> on networks you own.
 
 ### Headless / scheduled audit example
 
@@ -523,7 +431,7 @@ sudo wifi-auditor \
 
 ## Audit Log Verification
 
-Every log line is HMAC-SHA256 chained so tampering or deletion is detectable:
+Every log line is HMAC-SHA256 chained — tampering or deletion is detectable:
 
 ```bash
 wifi-auditor --verify-log
@@ -532,449 +440,82 @@ wifi-auditor --verify-log
 # ✗ Audit log TAMPERED or MISSING lines!
 ```
 
-The chain key is derived from `machine-id + tool version`. The signature chain is stored in `~/.wifi-auditor/chain.json`.
+The chain key is derived from `machine-id + tool version`. Signature chain stored
+at `~/.wifi-auditor/chain.json`.
 
 ---
 
 ## Pentest Report Generator
 
-Generate a structured Markdown report + `findings.json` from any completed session:
-
 ```bash
 wifi-auditor --report 20260604_143022
 ```
 
-Output files:
+Output:
 - `results/report_20260604_143022.md` — executive summary, scope, methodology, findings, evidence
 - `results/findings_20260604_143022.json` — machine-readable for tool chaining
+- `results/wps_TIMESTAMP.txt` — WPS results (timestamp, mode, BSSID, PIN, PSK)
 
-WPS results are saved separately to `results/wps_TIMESTAMP.txt` (timestamp, mode, BSSID, PIN, PSK).
-
-The report includes SHA-256 of the capture file as evidence integrity.
+SHA-256 of the capture file is included as evidence integrity.
 
 ---
 
 ## Wordlist Strategies
 
-| # | Strategy | Notes |
-|---|---|---|
-| 1 | SSID Mutations | leet, caps, year/number/symbol affixes |
-| 2 | Common Passwords | Built-in top-200 + optional rockyou.txt |
-| 3 | Custom Seeds | Provide seed words → mutate |
-| 4 | Personal Info (CUPP-style) | 13-field collector, 10 mutation families, probability-sorted output |
-| 5 | Date Patterns | All DDMMYYYY / YYYYMMDD combinations |
-| 6 | Phone Numbers | 10-digit + country-code variants |
-| 7 | Keyboard Walks | qwerty, 1q2w3e4r, etc. |
-| 8 | Crunch Brute-Force | Full charset via `crunch` |
-| 9 | Combine Multiple Lists | Merge + deduplicate |
-| 10 | All Strategies | Run everything combined |
-| **11** | **Vendor Defaults** | **OUI lookup → router model defaults (30-day cache)** |
-| 12 | Use Existing File | Load a wordlist from disk |
-| **13** | **Custom Pattern Builder** | Token-based patterns saved to `~/.wifi-auditor/custom_patterns.json`; `estimate_count()` before commit |
-| **14** | **Smart Scenario Engine** | 5 profiles sorted by real-world breach frequency; Indian Mobile User produces `parv@2003` first |
-
-Strategy 11 downloads the IEEE OUI database (cached 30 days at `~/.wifi-auditor/oui.db`) and returns default passwords for the detected router vendor (TP-Link, Netgear, D-Link, Huawei, etc.).
-
-### Strategy 4 — Personal Info (rebuilt)
-
-Collects 13 fields (`firstname`, `lastname`, `nickname`, `partner_name`, `pet_name`, `company`, `city`, `favourite_word`, `favourite_number`, `dob_full`, `partner_dob`, `phone`, `keywords`) and runs **10 mutation families** in probability order:
-
-| Family | Examples produced |
-|---|---|
-| 1 | `parv@2003`, `Parv2003`, `PARV2003`, `parv.2003`, `parv03` |
-| 2 | `p@rv2003`, `p@rv@2003` (leet + year) |
-| 3 | `parv2003!`, `Parv2003@`, `!parv2003` (name + year + special) |
-| 4 | `parv`, `PARV`, `Parv`, `vrap` (raw case / leet / reversed) |
-| 5 | name + favourite number / phone tail |
-| 6 | Traditional affixes (`COMMON_SUFFIXES` + year concat) |
-| 7 | 2-word combos: `parvkumar`, `Parv_Kumar`, `ParvKumar2003` |
-| 8 | Keyboard walks: `parv1234`, `Parvasdf` |
-| 9 | Date strings: `15082003`, `15-08-2003`, `parv15082003` |
-| 10 | Zero-padding: `parv00`, `parv007`, `Parv99` |
-
-### Strategy 13 — Custom Pattern Builder
-
-Token reference:
-
-| Token | Expands to |
-|---|---|
-| `%W` / `%w` / `%U` / `%T` | pool words (as-is / lower / UPPER / Title) |
-| `%L` / `%r` | leet substitution / reversed |
-| `%Y` / `%y` | 4-digit / 2-digit years from session |
-| `%s` / `%S` / `%k` | special char / symbol pair / keyboard walk |
-| `%n` / `%2` / `%4` | single digit / 2-digit / 4-digit number |
-| `%N` | favourite number(s) from session |
-| `[abc]` | one char from set |
-| `{text}` | literal string |
-
-Patterns are saved to `~/.wifi-auditor/custom_patterns.json` and reloaded on next run. `estimate_count()` shows the candidate count before you commit, and an optional `tqdm` progress bar fires if installed.
-
-```
-  Examples:
-    %T@%Y      →  Parv@2003
-    %w%s%Y     →  parv!2003  parv@2003  parv#2003 …
-    %T[!@#]%y  →  Parv!03   Parv@03   Parv#03
-    %w_%Y%s    →  parv_2003!  parv_2003@ …
-```
-
-### Strategy 14 — Smart Scenario Engine
-
-5 profiles sorted by real-world breach frequency:
-
-| Profile | Top patterns generated |
-|---|---|
-| **Indian Mobile User** | `parv@2003`, `parv2003`, `Parv2003`, `parv.2003`, `PARV2003` … |
-| **Corporate Employee** | `Parv@2003`, `parv2003`, `Parv2003!` … |
-| **Student** | `parv2003`, `Parv2003`, `parv@2003`, `parv03`, `parv123` … |
-| **General Consumer** | `parv2003`, `Parv2003`, `parv@2003`, `parv!`, `Parv!2003` … |
-| **Custom** | Opens interactive Pattern Builder (Strategy 13) |
-
-### Post-Generation QoL
-
-After every wordlist run a stats panel is printed:
-
-```
-  ──────────────────────────────────────────────────
-  Candidates:  14,823
-  File:        wordlists/personal_20260609_130000.txt
-  Size:        142.3 KB
-  Est. crack time @ 1M h/s: 0s
-
-  Top 10 (highest-priority) candidates:
-     1. parv@2003
-     2. parv2003
-     3. Parv2003
-     …
-```
-
-Then two optional prompts:
-- **Dedup against existing wordlist** — strips already-seen entries before cracking
-- **Pipe directly to cracker** — launches `cracker_menu()` immediately
+| #   | Strategy                     | Notes                                                  |
+| --- | ---------------------------- | ------------------------------------------------------ |
+| 1   | SSID Mutations               | leet, caps, year/number/symbol affixes                 |
+| 2   | Common Passwords             | Built-in top-200 + optional rockyou.txt                |
+| 3   | Custom Seeds                 | Provide seed words → mutate                            |
+| 4   | Personal Info (CUPP-style)   | 13 fields: name, DOB, pet, company…                    |
+| 5   | Date Patterns                | All DDMMYYYY / YYYYMMDD combinations                   |
+| 6   | Phone Numbers                | 10-digit + country-code variants                       |
+| 7   | Keyboard Walks               | qwerty, 1q2w3e4r, etc.                                 |
+| 8   | Crunch Brute-Force           | Full charset via `crunch`                              |
+| 9   | Combine Multiple Lists       | Merge + deduplicate                                    |
+| 10  | All Strategies               | Run everything combined                                |
+| 11  | Vendor Defaults              | OUI lookup → router model defaults (30-day cache)      |
+| 12  | Use Existing File            | Load a wordlist from disk                              |
+| 13  | Custom Pattern Builder       | Token-based pattern engine (`%w@%Y`, `%T%n`, etc.)     |
+| 14  | Smart Scenario Engine        | 5 profiles by breach frequency (Indian Mobile, Corp…)  |
 
 ---
 
-## Phantom AP — Signal Shadowing
+## Interface Diagnostics
 
-`modules/phantom.py` deploys a rogue access point that clones a target's beacon frame parameters identically (SSID, channel, beacon interval, IEs), making clients unable to distinguish it from the real AP.
+If monitor mode fails, run:
 
 ```bash
-# From interactive menu
-[p]  Phantom AP (Signal Shadowing)
+sudo wifi-auditor --check-interface
 ```
 
-### Personalities
-
-| # | Name | Behaviour |
-|---|---|---|
-| 1 | **Mirror** | Exact BSSID + SSID clone — clients auto-associate |
-| 2 | **Upgrade** | Same SSID, spoofed vendor upgrade BSSID — targets roaming clients |
-| 3 | **Stealth** | Random BSSID variant of SSID — low-attribution persistence |
-
-### Captive Portal
-
-The portal HTML is vendor-matched to the target OUI (TP-Link, Netgear, etc.). Credential capture is two-stage:
-- First submission → "Wrong password" (forces re-entry, higher confidence)
-- Second submission → connecting spinner → credentials saved to `~/.wifi-auditor/sessions/{id}_credentials.json`
-
-### Scope block
-
-Phantom AP **hard-blocks** all injection if the target BSSID is not in `scope.yaml`. The `--fast` flag is explicitly ignored for this module.
-
-### Dependencies
-
-Requires `hostapd` + `dnsmasq` (installed by `install.sh`). Configs are written to temp files and cleaned up on `Ctrl-C`.
+Prints: `iw dev` raw output, managed/monitor interface lists, interfering processes,
+airmon-ng availability, and root status — without starting the full tool.
 
 ---
 
-## Signal Intercept
+## Deauth Rate Limiter
 
-`modules/intercept.py` hooks into the running Phantom AP session via bettercap's JSON event stream and fingerprints all observed protocols in real time.
+Controlled via `--deauth-limit N` (default 5, max 20 bursts/min):
 
-Must be launched after Phantom AP is active.
-
-### Severity ratings
-
-| Protocol | Severity |
-|---|---|
-| `telnet` | CRITICAL |
-| `ftp` | CRITICAL |
-| `smtp` | HIGH |
-| `http_cred` | HIGH |
-| `dns_query` | MEDIUM |
-| `http_host` | INFORMATIONAL |
-
-Findings are appended to `~/.wifi-auditor/sessions/{session_id}_findings.json` for use by the PDF Report Engine.
-
----
-
-## Beacon Historian
-
-`modules/historian.py` passively profiles any visible access point without sending a single frame. No scope requirement.
-
-```bash
-# From interactive menu
-[h]  Beacon Historian
-```
-
-Collects beacon samples via `scapy` and computes:
-
-- **Stability score 0–100** — starts at 100, penalised by anomaly count (−15 each), RSSI variance (up to −40), and beacon interval variance (up to −20)
-- **IE change detection** — Information Element fingerprints compared via SHA-256; any change logged as anomaly
-- **Probe request collection** — nearby client MACs probing for the target SSID
-- **Behavioral profile** — duration, sample count, channel, vendor, SSID history
-
----
-
-## Neural Pathfinder
-
-`modules/neural.py` sends sanitised scan results to the OpenAI API and receives a structured JSON attack plan — no free-text output allowed.
-
-```bash
-# From interactive menu
-[N]  Neural Pathfinder
-```
-
-### Privacy protection
-
-Before any data leaves the machine, `_sanitize_scan_data()`:
-- Truncates full BSSID to OUI prefix only (first 8 chars: `XX:XX:XX`)
-- Removes all `client_macs` entries
-- Keeps only signal strength, channel, encryption type
-
-### Configuration
-
-API key stored in `~/.wifi-auditor/neural.conf`:
+- Token bucket refills at N tokens / 60 seconds per BSSID
+- Global hard cap: 100 frames/second across all targets
+- Live stats:
 
 ```
-[openai]
-api_key = sk-...
-```
-
-If the key is absent or the API call fails, the engine falls back to `_rule_based_brief()` — a local heuristic plan requiring no network access.
-
-### Consent gate
-
-Requires explicit consent prompt before any data is sent. Consent is not stored and must be given each session.
-
-### Model override
-
-```bash
-wifi-auditor --neural-model gpt-4o
-```
-
-Default: `gpt-4o-mini`.
-
----
-
-## Ghost Signal Tracker
-
-`modules/ghost.py` runs parallel vulnerability queries against three sources and caches results locally for 7 days.
-
-```bash
-# From interactive menu
-[g]  Ghost Signal Tracker
-```
-
-### Sources
-
-| Source | Query |
-|---|---|
-| **NVD** (NIST) | CVE search by vendor keyword from OUI |
-| **RouterSploit index** | Module match by vendor/model string |
-| **Shodan InternetDB** | IP-based port/vuln lookup |
-
-Queries run in parallel via `asyncio.gather()`. A 7-day SQLite cache at `~/.wifi-auditor/ghost_cache.db` avoids redundant API calls. Cache key = SHA-256[:24] of `"source:query"`.
-
----
-
-## PRISM Dashboard
-
-An opt-in Textual TUI that runs alongside the standard menu, providing a live 3-panel view of scan results, the session log, and active findings.
-
-```bash
-wifi-auditor --prism
-```
-
-### Layout
-
-```
-┌─────────────────────┬────────────────────┐
-│  Scan Results       │  Session Log       │
-│  (DataTable)        │  (Log panel)       │
-├─────────────────────┴────────────────────┤
-│  Active Findings (severity-coloured)     │
-└──────────────────────────────────────────┘
-```
-
-### Keybindings
-
-| Key | Action |
-|---|---|
-| `q` | Quit |
-| `r` | Force refresh |
-| `s` | Sort scan table by signal |
-
-Use `--no-tui` to force plain-text output even if `textual` is installed.
-
----
-
-## Temporal Attack Engine
-
-`modules/temporal.py` generates offline wordlists using known vendor PSK derivation algorithms that depend only on the router's MAC address and/or first-seen timestamp.
-
-```bash
-# From interactive menu
-[t]  Temporal Attack Engine
-```
-
-### Vendor algorithm coverage
-
-9 algorithm implementations covering TP-Link, ZTE, Huawei, Arris/Surfboard, Belkin, Netgear, Vodafone, D-Link, and a generic base. Each function signature:
-
-```python
-fn(mac_bytes: bytes, ts: datetime) -> Iterator[str]
-```
-
-All output is filtered through `_filter_wpa()` — enforces WPA PSK constraints: 8–63 characters, printable ASCII only, no spaces.
-
-### Usage
-
-```
-[t] Temporal Attack Engine
-BSSID of target: AA:BB:CC:DD:EE:FF
-Vendor (leave blank for auto-detect): TP-Link
-Beacon timestamp (YYYY-MM-DD, leave blank to try all years): 2024-06-01
-Generating... 3,412 candidates → wordlists/temporal_AABBCC_20260609.txt
-```
-
-The generated file can be fed directly into any cracking backend.
-
----
-
-## PDF Report Engine
-
-`modules/report_pdf.py` produces a professional 4-page PDF report from any completed session.
-
-```bash
-wifi-auditor --pdf                        # report for current session
-wifi-auditor --report SESSION_ID --pdf    # report for a past session
-```
-
-Output: `~/.wifi-auditor/reports/report_{session_id}.pdf`
-
-### Page structure
-
-| Page | Content |
-|---|---|
-| 1 | Cover — engagement title, date, auditor, scope summary |
-| 2 | Executive Summary — overall risk rating, key findings, recommendations |
-| 3 | Technical Findings — evidence table with SHA-256 hashes, protocol intercepts |
-| 4 | Remediation Checklist — NIST SP 800-153 control references per finding |
-
-### Engine fallback
-
-```
-try reportlab  →  OK → PDF generated
-               ↗  fail
-try weasyprint →  OK → PDF generated via HTML→PDF conversion
-               ↗  fail
-log warning: install reportlab or weasyprint
+Rate limiter: 4.2/5 tokens  (max 5 bursts/min  fps=12/100)
 ```
 
 ---
 
-## Multi-language Support
+## Known-working Adapters
 
-The UI is fully internationalised. Language auto-detects from the system locale.
-
-```bash
-wifi-auditor --lang es    # Spanish
-wifi-auditor --lang fr    # French
-wifi-auditor --lang ar    # Arabic
-wifi-auditor --lang hi    # Hindi
-wifi-auditor --lang zh    # Chinese
-```
-
-Locale files live in `locale/{lang}.json`. Fallback chain: requested lang → `en.json` → raw key.
-
-Set `WIFI_AUDITOR_LANG=es` in your environment to make the language choice persistent.
-
----
-
-## Directory Structure
-
-```
-wifi-auditor/
-├── wifi_auditor/               Python package (console_scripts entry point)
-│   ├── __init__.py
-│   └── cli.py                  Full CLI (15 flags + [w] WPS menu key)
-├── modules/
-│   ├── banner.py               Animated box-drawing banner, Colors, display helpers
-│   ├── cracker.py              4-backend cracker: aircrack/cowpatty/hashcat-dict/hashcat-rules
-│   ├── deauth.py               Deauth attack (scope + consent + rate limit + --fast support)
-│   ├── exceptions.py           Typed exception hierarchy
-│   ├── fingerprint.py          Passive 802.11 device fingerprinter (scapy)
-│   ├── ghost.py                Ghost Signal Tracker — NVD/RouterSploit/Shodan + SQLite cache
-│   ├── handshake.py            Passive / deauth / PMKID capture (+ --fast support)
-│   ├── historian.py            Beacon Historian — behavioral profiling, IE detection
-│   ├── i18n.py                 Internationalisation — t(), init(), active_lang()
-│   ├── intercept.py            Signal Intercept — bettercap event stream + severity ratings
-│   ├── logger.py               JSON-lines session logger
-│   ├── neural.py               Neural Pathfinder — OpenAI attack planner + privacy filter
-│   ├── oui.py                  IEEE OUI database + vendor defaults
-│   ├── pattern_engine.py       Token-based pattern expansion engine (Strategy 13 backend)
-│   ├── phantom.py              Phantom AP — hostapd/dnsmasq rogue AP + captive portal
-│   ├── pmkid.py                PMKID extraction + hashcat
-│   ├── preflight.py            Pre-flight system checker with interactive auto-installer
-│   ├── ratelimit.py            Token-bucket deauth rate limiter
-│   ├── report.py               Markdown + JSON pentest report generator
-│   ├── report_pdf.py           PDF Report Engine — reportlab primary / weasyprint fallback
-│   ├── reporter.py             HTML report (legacy)
-│   ├── runner.py               SubprocessRunner with retries + typed errors
-│   ├── scanner.py              airodump-ng + SSID entropy + WPA3 downgrade detection
-│   ├── scope.py                Scope enforcement + wizard
-│   ├── sequencer.py            Smart attack sequencer (WPS-aware scoring)
-│   ├── state.py                Session state + persistence + signal handling
-│   ├── temporal.py             Temporal Attack Engine — vendor PSK algorithms
-│   ├── utils.py                Root check, logging, HMAC audit log
-│   ├── wep.py                  WEP attack pipeline
-│   ├── wordlist.py             14-strategy wordlist engine (10 mutation families, QoL stats)
-│   └── wps.py                  WPS: Pixie-Dust / Vendor PIN spray / Full brute / Wash scan
-├── data/
-│   ├── common_passwords.txt
-│   └── router_defaults.yaml    Vendor → default password mapping
-├── locale/
-│   ├── en.json                 English (base locale)
-│   ├── es.json                 Spanish
-│   ├── fr.json                 French
-│   ├── ar.json                 Arabic
-│   ├── hi.json                 Hindi
-│   └── zh.json                 Chinese
-├── tests/
-│   ├── test_banner.py          Art rows, display helpers, Colors backward compat
-│   ├── test_ghost.py           GhostReport model, SQLite cache, NVD failure handling
-│   ├── test_historian.py       Profile construction, IE detection, probe dedup
-│   ├── test_hmac.py            HMAC chain tamper detection
-│   ├── test_i18n.py            Known key, fallback, interpolation, unknown lang
-│   ├── test_neural.py          Sanitize data (privacy), rule-based fallback, JSON parse
-│   ├── test_oui.py             OUI lookup (mock HTTP)
-│   ├── test_phantom.py         Scope block, config generation, portal HTML
-│   ├── test_preflight.py       Preflight logic (mock subprocess)
-│   ├── test_runner.py          SubprocessRunner timeout + retry
-│   ├── test_scope.py           Scope enforcement
-│   └── test_temporal.py        MAC parsing, algorithm selection, WPA filter, dedup
-├── captures/                   Handshake .cap files
-├── wordlists/                  Generated wordlists
-├── results/                    Cracked keys + WPS results + reports
-├── scope.yaml                  Authorization list (edit before attacking)
-├── pyproject.toml              PEP 517 package + console_scripts
-├── requirements.txt            Python deps
-├── requirements-dev.txt        Dev deps (pytest, ruff, mypy)
-├── install.sh                  Multi-distro installer
-├── Dockerfile                  Kali-based container
-├── docker-compose.yml          Privileged + USB passthrough
-└── docker-run.sh               Docker convenience wrapper
-```
+| Adapter                        | Chipset    | Monitor | Injection |
+| ------------------------------ | ---------- | ------- | --------- |
+| Alfa AWUS036ACH                | RTL8812AU  | ✓       | ✓         |
+| Alfa AWUS036NHA                | AR9271     | ✓       | ✓         |
+| TP-Link TL-WN722N **v1 only**  | AR9271     | ✓       | ✓         |
+| Panda PAU09                    | RT5572     | ✓       | ✓         |
 
 ---
 
@@ -985,16 +526,14 @@ Client ──── EAPOL M1 ────▶ AP
 Client ◀─── EAPOL M2 ──── AP
 Client ──── EAPOL M3 ────▶ AP
 Client ◀─── EAPOL M4 ──── AP
-        └── capture ──▶ .cap file
+       └── capture ──▶ .cap file
 
-For each password candidate:
+For each candidate:
   PMK = PBKDF2-HMAC-SHA1(password, SSID, 4096, 32)
   PTK = PRF-512(PMK, "Pairwise key expansion", ANonce, SNonce, MACs)
   MIC = HMAC-MD5/SHA1/SHA256(KCK, EAPOL frame)
   if MIC == captured_MIC → PASSWORD FOUND
 ```
-
----
 
 ## How WPS Pixie-Dust Works
 
@@ -1003,82 +542,132 @@ Attacker ──── WPS M1 ────▶ AP  (sends empty AuthKey)
 Attacker ◀─── WPS M2 ──── AP  (AP reveals E-S1, E-S2 nonces in clear)
                                ↓
               reaver -K 1 / bully --pixie
-              offline: brute PSK1/PSK2 from E-S1,E-S2,PKe,PKr,AuthKey
+              offline: brute PSK1/PSK2 from E-S1, E-S2, PKe, PKr, AuthKey
               if AP uses weak/static nonces → PIN recovered in <30 s
               PSK extracted from PIN via follow-up M4/M6 exchange
 ```
 
-Affected vendors: many Broadcom- and Ralink-based routers shipped 2010–2018 (D-Link, Tenda, TP-Link, Belkin, Netgear, Asus).
+Affected vendors: many Broadcom- and Ralink-based routers 2010–2018 (D-Link, Tenda,
+TP-Link, Belkin, Netgear, Asus).
 
 ---
 
-## Deauth Rate Limiter
+## Directory Structure
 
-Controlled via `--deauth-limit N` (default 5, max 20 bursts/min):
-
-- Token bucket refills at N tokens/60 seconds per BSSID
-- Global hard cap: 100 frames/second across all targets
-- Live stats shown during attack:
-  ```
-  Rate limiter: 4.2/5 tokens  (max 5 bursts/min  fps=12/100)
-  ```
-
----
-
-## Adapters Known to Work
-
-| Adapter | Chipset | Monitor | Injection |
-|---|---|---|---|
-| Alfa AWUS036ACH | RTL8812AU | ✓ | ✓ |
-| Alfa AWUS036NHA | AR9271 | ✓ | ✓ |
-| TP-Link TL-WN722N **v1 only** | AR9271 | ✓ | ✓ |
-| Panda PAU09 | RT5572 | ✓ | ✓ |
+```
+wifi_down/
+├── .github/
+│   └── workflows/
+│       └── ci.yml                  CI: ruff + mypy + pytest on push/PR
+├── wifi_auditor/                   Python package (console_scripts entry point)
+│   ├── __init__.py                 exports __version__ = "0.5.0"
+│   └── cli.py                      Full CLI: 15 flags + [w] WPS key + StateManager
+├── modules/
+│   ├── banner.py                   Pure ANSI typewriter (frozen at v0.4.6)
+│   ├── cracker.py                  4-backend cracker
+│   ├── deauth.py                   Deauth + rate limiter + scope + --fast support
+│   ├── exceptions.py               Typed exception hierarchy
+│   ├── fingerprint.py              Passive 802.11 device fingerprinter (scapy)
+│   ├── handshake.py                3-engine parallel capture
+│   ├── interface.py                Fixed monitor-mode regex (5 patterns)
+│   ├── logger.py                   JSON-lines session logger
+│   ├── oui.py                      IEEE OUI database + vendor defaults (30-day cache)
+│   ├── pattern_engine.py           Token-based pattern expansion engine
+│   ├── pmkid.py                    PMKID extraction + hashcat
+│   ├── preflight.py                Pre-flight checker + auto_install_missing()
+│   ├── ratelimit.py                Token-bucket deauth rate limiter
+│   ├── reporter.py                 Markdown + JSON + HTML pentest report generator
+│   ├── runner.py                   SubprocessRunner with retries + typed errors
+│   ├── scanner.py                  airodump-ng wrapper + WPA3 downgrade detection
+│   ├── scope.py                    Scope enforcement + 6-point wizard
+│   ├── sequencer.py                WPS-aware smart attack sequencer
+│   ├── state.py                    StateManager + session persistence + signal handling
+│   ├── utils.py                    Root check + re-exports from interface.py
+│   ├── wep.py                      WEP attack pipeline
+│   ├── wordlist.py                 14-strategy wordlist engine (1,031 lines)
+│   └── wps.py                      WPS: Pixie-Dust / Vendor PIN / Full brute / Wash
+├── data/
+│   ├── common_passwords.txt
+│   └── router_defaults.yaml        Vendor → default passwords (schema v1, 30-day cache)
+├── tests/
+│   ├── test_banner.py              Banner smoke tests (frozen at v0.4.6)
+│   ├── test_hmac.py                HMAC chain tamper detection
+│   ├── test_oui.py                 OUI lookup (mock HTTP)
+│   ├── test_preflight.py           Preflight logic (mock subprocess)
+│   ├── test_router_defaults.py     router_defaults.yaml schema validation
+│   ├── test_runner.py              SubprocessRunner timeout + retry
+│   ├── test_scope.py               Scope enforcement
+│   └── test_version.py             __version__ export sanity
+├── captures/                       Handshake .cap files  [gitignored, .gitkeep tracks dir]
+├── wordlists/                      Generated wordlists    [gitignored, .gitkeep tracks dir]
+├── results/                        Reports + WPS results  [gitignored, .gitkeep tracks dir]
+├── .gitignore
+├── CHANGELOG.md
+├── CONTRIBUTING.md
+├── Dockerfile
+├── LICENSE
+├── README.md
+├── SECURITY.md
+├── docker-compose.yml
+├── docker-run.sh
+├── install.sh
+├── pyproject.toml                  Single source of truth for deps
+├── requirements.txt                Python runtime deps
+├── requirements-dev.txt            Dev deps: pytest, ruff, mypy
+├── scope.yaml.example              Template — copy to scope.yaml (gitignored)
+└── wifi_auditor.py                 Legacy shim → delegates to wifi_auditor/cli.py
+```
 
 ---
 
 ## Troubleshooting
 
-**"No wireless interfaces found"** — Check `iw dev` and `ip link`. Your adapter may need a driver (`dkms`).
+**"No wireless interfaces found"** — Run `iw dev` and `ip link`. Adapter may need a driver (`dkms`). Use `--check-interface` for a full diagnostic printout.
 
-**Monitor mode fails** — `sudo airmon-ng check kill && sudo airmon-ng start wlan0`.
+**Monitor mode fails** — `sudo airmon-ng check kill && sudo airmon-ng start wlan0`. Then run `--check-interface` to confirm.
 
 **Scope error on startup** — Create `scope.yaml` with `wifi-auditor --scope-wizard`.
 
 **"BSSID mismatch" on consent prompt** — Type the full BSSID character-by-character as shown (no paste).
 
-**OUI database unavailable** — Run `wifi-auditor --refresh-oui` to force a re-download.
+**OUI database unavailable** — `wifi-auditor --refresh-oui` to force re-download.
 
-**WPS not found after scan** — The AP may have WPS disabled in firmware. Use mode [4] Wash Scan on a specific channel for a longer look.
+**WPS not found after scan** — AP may have WPS disabled in firmware. Use mode [4] Wash Scan on a specific channel for a longer look.
 
-**reaver "WPS transaction failed"** — AP may be rate-limiting WPS attempts. Use `--delay` (mode 3 prompts you) or wait for lockout to expire (5–60 min).
+**reaver "WPS transaction failed"** — AP is rate-limiting WPS attempts. Use `--delay` (mode 3 prompts you), or wait for lockout to expire (5–60 min).
 
-**hashcat rule file not found** — Install `hashcat-rules` package or run `wifi-auditor` from a directory containing a `rules/` folder.
+**hashcat rule file not found** — Install `hashcat-rules` package or run from a directory containing a `rules/` folder.
 
-**Phantom AP: "hostapd not found"** — Run `sudo apt-get install hostapd dnsmasq` or re-run `sudo ./install.sh`.
+**cowpatty "Collected all necessary data"** — SSID mismatch. Ensure session SSID matches the one used during capture.
 
-**Signal Intercept: "bettercap not found"** — Install bettercap manually from `https://www.bettercap.org/installation/` then retry.
-
-**Neural Pathfinder: no API key** — Create `~/.wifi-auditor/neural.conf` with your OpenAI key (see Neural Pathfinder section). The rule-based fallback activates automatically without a key.
-
-**PDF report: "reportlab not installed"** — Run `pip install reportlab` inside the venv (`source ~/.wifi-auditor/venv/bin/activate`). Or install `weasyprint` as the fallback engine.
-
-**PRISM TUI blank screen** — Ensure `textual>=0.57.0` is installed. Try `--no-tui` to confirm the issue is textual-specific.
-
-**cowpatty "Collected all necessary data"** — SSID mismatch. Ensure the SSID in session state matches the one used during capture.
+**Monitor mode interface left stranded after crash** — `sudo airmon-ng stop wlan0mon`. From v0.5.0, cleanup errors are printed to stderr instead of silently swallowed.
 
 ---
 
 ## Development
 
 ```bash
+git clone https://github.com/amibhai/wifi_down.git
+cd wifi_down
+python3 -m venv .venv && source .venv/bin/activate
+pip install -r requirements.txt
 pip install -r requirements-dev.txt
-pytest tests/ -v
-ruff check .
-mypy modules/ wifi_auditor/
+
+pytest tests/ -v          # run test suite
+ruff check .              # lint
+mypy modules/ wifi_auditor/ --ignore-missing-imports   # type check
 ```
+
+See [CONTRIBUTING.md](CONTRIBUTING.md) for branch naming, commit conventions, and the PR checklist.
+
+---
+
+## Security
+
+To report a vulnerability in the tool itself, see [SECURITY.md](SECURITY.md).
 
 ---
 
 ## License
 
-MIT — for authorized security testing only. See `LICENSE` for full terms.
+MIT — for authorized security testing only. See [LICENSE](LICENSE) for full terms.
