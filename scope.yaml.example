@@ -1,0 +1,13 @@
+# WiFi Auditor — Scope Authorization File
+# Copy this file to scope.yaml and fill in your authorized targets.
+# Run: wifi-auditor --scope-wizard   (interactive builder with 6-point checklist)
+#
+# LEGAL NOTICE: Only add networks you own or have EXPLICIT WRITTEN PERMISSION to test.
+# Unauthorized access is a criminal offence (CFAA / UK CMA / India IT Act 2000).
+
+authorized_targets:
+  - bssid: "AA:BB:CC:DD:EE:FF"
+    ssid: "YourNetworkName"
+    authorized_by: "Full Name (relationship: owner / written-permission)"
+    valid_until: "YYYY-MM-DD"
+    notes: "Source of authorization: e.g. written email dated YYYY-MM-DD"

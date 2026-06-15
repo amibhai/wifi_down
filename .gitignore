@@ -29,13 +29,13 @@ ENV/
 Thumbs.db
 Desktop.ini
 
-# Project-specific — never commit captures or wordlists
-captures/*.cap
-captures/*.ivs
-captures/*.csv
-wordlists/*.txt
-results/*.txt
-results/*.key
+# Output directories — ignore contents but track directory structure
+captures/*
+!captures/.gitkeep
+wordlists/*
+!wordlists/.gitkeep
+results/*
+!results/.gitkeep
 
 # Logs
 *.log
@@ -45,3 +45,6 @@ logs/
 *.pem
 *.key
 *.crt
+
+# Authorization scope — contains sensitive target data
+scope.yaml
