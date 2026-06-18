@@ -1,12 +1,10 @@
 #!/usr/bin/env python3
 """
 System utilities: root check, dependency verification, interface management,
-structured logging, and tamper-evident HMAC-chained audit log.
+and structured session logging.
 """
 from __future__ import annotations
 
-import hashlib
-import hmac
 import json
 import logging
 import logging.handlers
@@ -26,7 +24,6 @@ from modules.banner import C, info, success, warn, error
 
 AUDIT_HOME = Path.home() / ".wifi-auditor"
 LOG_FILE   = AUDIT_HOME / "audit.log"
-CHAIN_FILE = AUDIT_HOME / "chain.json"
 
 # ─── Required / optional tools ────────────────────────────────────────────────
 
@@ -76,103 +73,9 @@ def setup_logging(level: int = logging.DEBUG) -> logging.Logger:
             datefmt="%Y-%m-%dT%H:%M:%S",
         )
     )
-    # Wrap with HMAC-chaining filter
-    file_handler.addFilter(_HMACFilter())
     root.addHandler(file_handler)
 
     return root
-
-
-###############################################################################
-# HMAC-chained audit log
-###############################################################################
-
-def _get_chain_key() -> bytes:
-    """Derive signing key from machine-id + tool version."""
-    machine_id = ""
-    for path in ("/etc/machine-id", "/var/lib/dbus/machine-id"):
-        try:
-            machine_id = Path(path).read_text().strip()
-            break
-        except OSError:
-            pass
-    version = "2.0.0"
-    return hashlib.sha256(f"{machine_id}:{version}".encode()).digest()
-
-
-def _load_chain() -> dict:
-    if CHAIN_FILE.exists():
-        try:
-            return json.loads(CHAIN_FILE.read_text())
-        except Exception:
-            pass
-    return {"previous_sig": "", "line_count": 0}
-
-
-def _save_chain(chain: dict) -> None:
-    CHAIN_FILE.write_text(json.dumps(chain, indent=2))
-
-
-class _HMACFilter(logging.Filter):
-    """Compute HMAC-SHA256 chained signature for each file log entry."""
-
-    def __init__(self) -> None:
-        super().__init__()
-        self._key = _get_chain_key()
-
-    def filter(self, record: logging.LogRecord) -> bool:
-        chain = _load_chain()
-        prev_sig = chain.get("previous_sig", "")
-        msg = self.format_minimal(record)
-        sig = hmac.new(
-            self._key,
-            (prev_sig + msg).encode(),
-            hashlib.sha256,
-        ).hexdigest()
-        chain["previous_sig"] = sig
-        chain["line_count"] = chain.get("line_count", 0) + 1
-        _save_chain(chain)
-        record.hmac_sig = sig  # type: ignore[attr-defined]
-        return True
-
-    @staticmethod
-    def format_minimal(record: logging.LogRecord) -> str:
-        return f"{record.levelname}|{record.module}|{record.getMessage()}"
-
-
-def verify_audit_log() -> bool:
-    """
-    Walk audit.log and chain.json, recompute every HMAC, and report tampering.
-    Returns True if the chain is intact.
-    """
-    from rich.console import Console
-    con = Console()
-
-    if not LOG_FILE.exists():
-        con.print("[yellow]No audit log found.[/]")
-        return True
-
-    chain = _load_chain()
-    key = _get_chain_key()
-    prev_sig = ""
-    ok = True
-
-    with open(LOG_FILE, encoding="utf-8", errors="replace") as f:
-        for lineno, raw_line in enumerate(f, 1):
-            line = raw_line.rstrip("\n")
-            sig = hmac.new(key, (prev_sig + line).encode(), hashlib.sha256).hexdigest()
-            prev_sig = sig
-
-    stored_sig = chain.get("previous_sig", "")
-    if prev_sig != stored_sig:
-        con.print(f"[bold red]✗ Audit log TAMPERED or MISSING lines! "
-                  f"Expected {stored_sig[:16]}… got {prev_sig[:16]}…[/]")
-        ok = False
-    else:
-        con.print(f"[bold green]✓ Audit log integrity verified "
-                  f"({chain.get('line_count', '?')} entries, chain intact)[/]")
-
-    return ok
 
 
 def emit_session_summary(
