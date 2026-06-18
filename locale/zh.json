@@ -19,6 +19,5 @@
   "preflight.title": "wifi_down — 系统预检",
   "preflight.passed": "所有检查已通过，可以开始审计。",
   "preflight.failed": "预检失败 — 请修复以上问题后再继续。",
-  "scope.error": "BSSID {bssid} 不在 scope.yaml 中 — 操作已阻止。",
   "error.root_required": "此工具必须以 root (sudo) 运行。"
 }

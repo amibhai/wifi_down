@@ -19,6 +19,5 @@
   "preflight.title": "wifi_down — فحص النظام المسبق",
   "preflight.passed": "اجتازت جميع الفحوصات. جاهز للتدقيق.",
   "preflight.failed": "فشل الفحص المسبق — أصلح المشكلات قبل المتابعة.",
-  "scope.error": "BSSID {bssid} غير موجود في scope.yaml — تم حظر العملية.",
   "error.root_required": "يجب تشغيل هذه الأداة بصلاحيات root (sudo)."
 }

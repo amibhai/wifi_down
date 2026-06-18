@@ -19,6 +19,5 @@
   "preflight.title": "wifi_down — सिस्टम प्री-फ्लाइट जांच",
   "preflight.passed": "सभी जांच पास हो गईं। ऑडिट के लिए तैयार।",
   "preflight.failed": "प्री-फ्लाइट विफल — जारी रखने से पहले समस्याएं ठीक करें।",
-  "scope.error": "BSSID {bssid} scope.yaml में नहीं है — ऑपरेशन ब्लॉक।",
   "error.root_required": "यह टूल root (sudo) के रूप में चलाना आवश्यक है।"
 }

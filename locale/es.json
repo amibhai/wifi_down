@@ -19,6 +19,5 @@
   "preflight.title": "wifi_down — Verificación del sistema",
   "preflight.passed": "Todas las verificaciones pasaron. Listo para auditar.",
   "preflight.failed": "Error en verificación previa — corrija los problemas antes de continuar.",
-  "scope.error": "BSSID {bssid} no está en scope.yaml — operación bloqueada.",
   "error.root_required": "Esta herramienta debe ejecutarse como root (sudo)."
 }

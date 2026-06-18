@@ -31,7 +31,7 @@
   "preflight.sentinel_written": "First-run check complete.",
 
   "phantom.title": "PHANTOM AP",
-  "phantom.warning": "This operation sends beacon frames and creates a rogue access point.\nHard scope block enforced — target must be in scope.yaml.",
+  "phantom.warning": "This operation sends beacon frames and creates a rogue access point.\nUse only on networks you own or have written permission to test.",
   "phantom.personality_mirror": "Mirror — exact clone of target",
   "phantom.personality_upgrade": "Upgrade — same SSID, advertises WPA3",
   "phantom.personality_stealth": "Stealth — cloned SSID, passive handshake capture only",
@@ -40,7 +40,7 @@
   "phantom.credential_logged": "Credential captured from {mac}",
 
   "historian.title": "BEACON HISTORIAN",
-  "historian.passive_note": "Passive operation — no scope authorization required.",
+  "historian.passive_note": "Passive operation — no frame injection or transmission.",
   "historian.duration_prompt": "Collection window in seconds [60]: ",
   "historian.collecting": "Collecting beacon frames from {ssid}...",
   "historian.profile_ready": "Behavioral profile complete.",
@@ -79,9 +79,6 @@
   "report.pdf_ready": "PDF report written to {path}.",
   "report.pdf_unavailable": "PDF engine unavailable (install reportlab or weasyprint).",
   "report.md_ready": "Markdown report written to {path}.",
-
-  "scope.error": "BSSID {bssid} is not in scope.yaml — operation blocked.",
-  "scope.phantom_block": "Phantom AP requires explicit scope authorization. No bypass available.",
 
   "error.no_interface": "Set interface first (Option 1).",
   "error.no_target": "Scan and select a target first (Option 2).",
