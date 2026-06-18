@@ -26,8 +26,8 @@ class TestI18nFallback:
 
     def test_format_interpolation(self) -> None:
         init("en")
-        result = t("scope.error", bssid="AA:BB:CC:DD:EE:FF")
-        assert "AA:BB:CC:DD:EE:FF" in result
+        result = t("error.dep_missing", binary="aircrack-ng")
+        assert "aircrack-ng" in result
 
     def test_unknown_lang_falls_back_to_en(self) -> None:
         init("xx")  # non-existent language
@@ -55,6 +55,5 @@ class TestI18nFallback:
 
     def test_format_error_returns_raw(self) -> None:
         init("en")
-        # If a format key is missing, return the raw string
-        result = t("scope.error")  # missing bssid kwarg
+        result = t("error.dep_missing")  # missing binary kwarg — should return raw string
         assert isinstance(result, str)

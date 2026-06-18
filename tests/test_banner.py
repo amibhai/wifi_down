@@ -5,18 +5,29 @@ import unittest
 from unittest.mock import patch
 
 
-class TestBanner(unittest.TestCase):
+class TestBannerArt:
+    """Test ASCII art constant."""
 
-    def test_print_banner_does_not_raise(self):
-        """print_banner() must complete without throwing under any terminal width."""
+    def test_art_not_empty(self) -> None:
+        from modules.banner import WIFI_DOWN_ART
+        assert len(WIFI_DOWN_ART.strip()) > 0
+
+    def test_art_contains_block_chars(self) -> None:
+        from modules.banner import WIFI_DOWN_ART
+        assert "█" in WIFI_DOWN_ART or "╗" in WIFI_DOWN_ART
+
+
+class TestBannerOutput:
+    """Test print_banner runs without error."""
+
+    def test_print_banner_no_error(self, capsys) -> None:
         from modules.banner import print_banner
-        captured = io.StringIO()
-        with patch("builtins.input", return_value=""), \
-             patch("sys.stdout", captured):
-            try:
-                print_banner()
-            except SystemExit:
-                pass  # os.system("clear") may raise in test env — acceptable
+        with patch("os.system"), \
+             patch("builtins.input", return_value=""), \
+             patch("time.sleep"):
+            print_banner()
+        # Should not raise
+
 
     def test_print_menu_does_not_raise(self):
         """print_menu() must not raise regardless of session state contents."""
