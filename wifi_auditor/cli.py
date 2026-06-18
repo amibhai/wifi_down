@@ -238,12 +238,16 @@ def action_capture() -> None:
     cap = capture_handshake(
         bssid=state["target"]["bssid"],
         ssid=state["target"]["ssid"],
-        channel=state["target"]["channel"],
+        channel=int(state["target"]["channel"]),
         monitor_interface=state["monitor_interface"],
+        timeout=180,
     )
     if cap:
         state["capture_file"] = cap
         _sm.transition(Stage.CAPTURING, capture_file=cap, handshake_file=cap)
+        success(f"Saved: {cap}")
+    else:
+        error("No handshake captured.")
 
 
 def action_wordlist() -> None:
