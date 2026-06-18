@@ -5,6 +5,104 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [0.7.0] — 2026-06-19
+
+### Fixed — 11 confirmed bugs in handshake capture pipeline
+
+**Bug 1 — airodump writes `prefix-01.cap` not `prefix.cap` (`_find_cap_file`)**
+- `modules/handshake.py`: `_find_cap_file()` now uses `glob(prefix + '-*.cap')` and returns
+  `max(..., key=os.path.getmtime)`. Old code used `prefix + '.cap'` which airodump-ng never
+  creates — cap file was never found, verification always failed.
+
+**Bug 2 — missing `--write-interval 1` — cap file never flushed**
+- `modules/handshake.py` (`_launch_airodump`) and `modules/client_scanner.py` (`scan_clients`):
+  `--write-interval 1` added to every airodump-ng invocation so the output file is flushed to
+  disk every second instead of at process exit.
+
+**Bug 3 — missing `-a` flag — client list flooded with unassociated stations**
+- `modules/client_scanner.py` (`scan_clients`): `-a` flag added to airodump-ng command.
+  Without it the Station section includes every device that ever sent a probe request,
+  making the client list unusable for targeted deauth.
+
+**Bug 4 — null bytes in CSV crash `csv.reader`**
+- `modules/client_scanner.py` (`_parse_airodump_csv`): file is read with `errors='replace'`
+  then each line has `line.replace('\0', '')` applied before passing to `csv.reader`.
+  Null bytes inside CSV records caused `csv.reader` to raise or silently corrupt rows.
+
+**Bug 5 — first client row silently dropped**
+- `modules/client_scanner.py` (`_parse_airodump_csv`): `hit_clients` flag is set to `True`
+  *before* the `continue` that skips the `Station MAC` header row.
+  Old code set the flag after `continue`, meaning `hit_clients` was never `True` when
+  the first data row was evaluated and it was always skipped.
+
+**Bug 6 — BSSID comparison fails on whitespace**
+- `modules/client_scanner.py` (`_parse_airodump_csv`): every field in each CSV row is
+  `.strip()`-ped before use. airodump-ng surrounds most fields with leading/trailing spaces;
+  without stripping, `assoc_bssid != target_bssid.upper()` was always `True`.
+
+**Bug 7 — aireplay-ng "direction 2" wrong — use scapy for Client→AP deauth**
+- `modules/handshake.py` (`_send_deauth_burst`): the second deauth direction is now sent
+  as a raw scapy frame (`Dot11Deauth` with `addr1=BSSID, addr2=CLIENT, addr3=BSSID`).
+  Old code swapped `-a` and `-c` args which produced a mangled frame the kernel rejected.
+
+**Bug 8 — BPF filter unreliable in monitor mode — switch to `lfilter`**
+- `modules/handshake.py` (`_scapy_eapol_sniffer`): scapy `sniff()` now uses
+  `lfilter=lambda p: p.haslayer(EAPOL)` instead of `filter='ether proto 0x888e'`.
+  In monitor mode RadioTap encapsulation shifts byte offsets so the BPF string filter
+  matches nothing on most drivers; Python-level `lfilter` is 100% reliable.
+
+**Bug 9 — hcxdumptool + airodump-ng on same interface simultaneously**
+- `modules/handshake.py` (`capture_handshake`): airodump-ng is fully terminated and the
+  interface is given 1 s to settle before `_run_hcxdumptool_pmkid()` is called.
+  Old code spawned hcxdumptool while airodump-ng was still running, causing both tools
+  to fight for exclusive interface access and neither to capture anything.
+
+**Bug 10 — tshark counted any 2 EAPOL frames as a valid handshake**
+- `modules/handshake.py` (`verify_handshake`, all three methods): verification now checks
+  EAPOL Key Information field bits to classify each frame as M1/M2/M3/M4 and requires
+  either M1+M2 or M2+M3 to be present before declaring success. Old tshark method
+  counted raw EAPOL frame count ≥ 2 which returned true for any EAP exchange including
+  incomplete ones that hashcat/aircrack-ng cannot crack.
+
+**Bug 11 — channel lock never verified**
+- `modules/handshake.py` (`lock_channel_verified`): after setting the channel via
+  `iw dev set channel` + `iwconfig channel`, the function reads back `iw dev info` and
+  confirms the reported channel matches the requested one. Retries up to 3 times.
+  Old code assumed the set command succeeded and never verified, causing the interface
+  to silently capture on the wrong channel.
+
+### Added
+
+- **`modules/client_scanner.py`** — new dedicated, independently testable module:
+  - `WifiClient` dataclass — `mac`, `bssid`, `power`, `packets`, `first_seen`,
+    `last_seen` fields; `signal_display` property (excellent/good/fair/weak).
+  - `scan_clients(bssid, channel, monitor_interface, duration, verbose)` — runs
+    airodump-ng with `-a --write-interval 1 --output-format csv` and returns a
+    `List[WifiClient]` sorted by signal strength (strongest first), deduplicated by MAC.
+  - `_parse_airodump_csv(csv_path, target_bssid)` — parser implementing Bug 3–6 fixes;
+    handles null bytes, whitespace, not-associated markers, wrong-BSSID entries, and
+    the first-row drop bug.
+  - `display_clients(clients, bssid)` — formatted table output.
+
+- **`tests/test_handshake.py`** — 8 regression test classes covering all 11 bugs:
+  - `TestCSVParsing` — 8 parameterised cases covering Bugs 3–6
+    (null bytes, not-associated, wrong BSSID, first-row drop, whitespace, missing file,
+    deduplication, signal sort order).
+  - `TestWifiClientSignalDisplay` — 4 cases for `signal_display` property.
+  - `TestVerifyHandshake` — 4 cases covering Bug 10 (aircrack 0-handshake rejection,
+    1-handshake acceptance, too-small file, missing file).
+  - `TestCapFileFinding` — 4 cases covering Bug 1 (numbered glob, none, unprefixed,
+    most-recent).
+  - `TestLockChannelVerified` — 2 cases covering Bug 11 (confirmed, mismatch).
+
+### Changed
+
+- `wifi_auditor/cli.py` — all `capture_handshake()` call sites unchanged (same
+  signature); `modules.client_scanner` imported inside `capture_handshake()` to keep
+  the public API stable. No CLI flag changes required.
+
+---
+
 ## [0.6.0] — 2026-06-15
 
 ### Removed

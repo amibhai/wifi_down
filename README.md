@@ -15,7 +15,7 @@ Automated WiFi security auditing framework. Menu-driven, end-to-end pipeline:
 |---|---|
 | **Scanner** | Monitor mode scan via `airodump-ng` with SSID entropy + vendor tags + WPA3 downgrade detection |
 | **WPS Attacks** | Pixie-Dust (offline nonce) / Vendor PIN spray (OUI-matched) / Full brute-force / Wash scan |
-| **Handshake Capture** | Passive / deauth / PMKID |
+| **Handshake Capture** | Bulletproof 3-engine pipeline: airodump-ng + scapy lfilter sniffer + hcxdumptool PMKID (sequential, never parallel) |
 | **Wordlist Generator** | 14 strategies: CUPP-style personal profiling, token pattern builder, smart scenario engine + QoL stats panel |
 | **Pattern Engine** | Token-based custom wordlist builder (`%W/%Y/%s/[abc]/{text}`) with save/reload, estimate, tqdm progress |
 | **Smart Scenario Engine** | 5 real-world profiles (Indian Mobile User, Corporate, Student, Consumer, Custom) sorted by breach frequency |
@@ -265,6 +265,67 @@ Package mapping examples (TOOL_PACKAGES):
 └──────────────┴──────────────┴──────────────┴─────┘
 
 ✓ All pre-flight checks passed. Ready to audit.
+```
+
+---
+
+## Handshake Capture Engine
+
+`modules/handshake.py` (v0.7.0 — complete rewrite) and `modules/client_scanner.py` (new)
+implement a bulletproof 3-engine WPA2 handshake capture pipeline.
+
+### 11 confirmed bugs fixed in v0.7.0
+
+| Bug | Location | Root cause | Fix |
+|---|---|---|---|
+| **1** | `_find_cap_file` | `prefix.cap` used; airodump writes `prefix-01.cap` | `glob(prefix + '-*.cap')` |
+| **2** | `_launch_airodump`, `scan_clients` | No `--write-interval 1`; cap/csv never flushed | Added `--write-interval 1` |
+| **3** | `scan_clients` | No `-a` flag; unassociated stations flooded client list | Added `-a` |
+| **4** | `_parse_airodump_csv` | Null bytes in CSV crashed `csv.reader` | `line.replace('\0', '')` per line |
+| **5** | `_parse_airodump_csv` | `hit_clients` flag set after `continue`; first row always skipped | Flag set before `continue` |
+| **6** | `_parse_airodump_csv` | BSSID comparison failed due to leading/trailing spaces | `.strip()` all CSV fields |
+| **7** | `_send_deauth_burst` | Dir-2 used swapped `-a`/`-c` → mangled frame | Replaced with scapy `Dot11Deauth` |
+| **8** | `_scapy_eapol_sniffer` | BPF `ether proto 0x888e` unreliable in monitor mode | Switched to `lfilter` (Python-level) |
+| **9** | `capture_handshake` | hcxdumptool + airodump-ng on same interface simultaneously | airodump killed first; 1 s settle |
+| **10** | `verify_handshake` | Any 2 EAPOL frames counted as valid | Must detect M1+M2 or M2+M3 via Key Info bits |
+| **11** | `lock_channel_verified` | Channel set assumed successful, never verified | `iw dev info` readback; 3 retries |
+
+### Capture pipeline
+
+```
+ Stage 1: Injection test (aireplay-ng -9) — warning only, never aborts
+ Stage 2: Channel lock with readback verification (up to 3 retries)  [Bug 11]
+ Stage 3: client_scanner.scan_clients — 12 s airodump-ng -a CSV scan  [Bugs 2,3,4,5,6]
+ Stage 4: Engine A (airodump-ng) + Engine B (scapy lfilter sniffer) in parallel  [Bugs 1,2,8]
+ Stage 5: Deauth loop — targeted unicast (scapy Client→AP)  [Bug 7]
+            ↓ handshake found early? → stop, save, return
+ Stage 6: Kill airodump-ng → wait 1 s → hcxdumptool PMKID (exclusive)  [Bug 9]
+ Stage 7: Handshake verification: aircrack-ng / tshark Key Info / scapy rdpcap  [Bug 10]
+```
+
+### Client scanner (`modules/client_scanner.py`)
+
+Dedicated, independently testable module extracted from `handshake.py`:
+
+```python
+from modules.client_scanner import scan_clients, display_clients
+
+clients = scan_clients(
+    bssid="AA:BB:CC:DD:EE:FF",
+    channel=6,
+    monitor_interface="wlan0mon",
+    duration=12,
+)
+display_clients(clients, bssid)
+# → sorted by signal strength, deduplicated, associated stations only
+```
+
+### Regression tests (`tests/test_handshake.py`)
+
+8 test classes, 22 individual test cases, zero external tool dependencies:
+
+```bash
+pytest tests/test_handshake.py -v
 ```
 
 ---
