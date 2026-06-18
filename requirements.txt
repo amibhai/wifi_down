@@ -5,6 +5,7 @@
 # package manager (see install.sh or README). These are pure-Python extras.
 
 # ── Core ──────────────────────────────────────────────────────────────────────
+Pillow>=10.0.0
 scapy>=2.5.0
 rich>=13.7.0
 pyyaml>=6.0
