@@ -271,8 +271,10 @@ Package mapping examples (TOOL_PACKAGES):
 
 ## Handshake Capture Engine
 
-`modules/handshake.py` (v0.7.0 — complete rewrite) and `modules/client_scanner.py` (new)
-implement a bulletproof 3-engine WPA2 handshake capture pipeline.
+`modules/handshake.py` (v0.8.0 — single-instance architecture)
+implements a bulletproof 3-stage WPA2 handshake capture pipeline.
+`modules/client_scanner.py` has been **deleted** — all its functionality
+is now embedded directly in `handshake.py`.
 
 ### 11 confirmed bugs fixed in v0.7.0
 
@@ -290,39 +292,35 @@ implement a bulletproof 3-engine WPA2 handshake capture pipeline.
 | **10** | `verify_handshake` | Any 2 EAPOL frames counted as valid | Must detect M1+M2 or M2+M3 via Key Info bits |
 | **11** | `lock_channel_verified` | Channel set assumed successful, never verified | `iw dev info` readback; 3 retries |
 
-### Capture pipeline
+### 6 surviving bugs fixed in v0.8.0
+
+| # | Location | Root cause | Fix |
+|---|---|---|---|
+| **S1** | `_scapy_sniffer_thread` | `sniff(stop_filter=…)` only checks stop condition on packet arrival — hangs on quiet networks | Switched to `AsyncSniffer`; `.stop(join=True)` is immediate |
+| **S2** | `_deauth_targeted`, `_deauth_broadcast` | `aireplay-ng` fights airodump-ng for channel lock; deauth sent on wrong channel | Added `-D` (disable aireplay channel mgmt) + `-x 1000` burst rate |
+| **S3** | `_run_pmkid_phase` | `--filterlist_ap` expects BSSID without colons; colons cause it to capture all traffic | Filter file written as `aabbcc112233` (no colons, lowercase) |
+| **S4** | `capture_handshake` | `verify_handshake` called on every 2 s tick — CPU thrash, I/O contention | `VERIFY_INTERVAL = 3.0` constant; rate-limited to once per 3 s |
+| **S5** | `capture_handshake` | 8–10 deauth frames dropped on congested 2.4 GHz; AP never deauths client | `count=64` per client + 12 s wait window (4 × 3 s) |
+| **S6** | `capture_handshake` | Separate airodump-ng for discovery + capture left a gap with no frames | ONE airodump-ng (no `--output-format`) writes both `.cap` and `.csv`; CSV read live |
+
+### Capture pipeline (v0.8.0)
 
 ```
- Stage 1: Injection test (aireplay-ng -9) — warning only, never aborts
- Stage 2: Channel lock with readback verification (up to 3 retries)  [Bug 11]
- Stage 3: client_scanner.scan_clients — 12 s airodump-ng -a CSV scan  [Bugs 2,3,4,5,6]
- Stage 4: Engine A (airodump-ng) + Engine B (scapy lfilter sniffer) in parallel  [Bugs 1,2,8]
- Stage 5: Deauth loop — targeted unicast (scapy Client→AP)  [Bug 7]
-            ↓ handshake found early? → stop, save, return
- Stage 6: Kill airodump-ng → wait 1 s → hcxdumptool PMKID (exclusive)  [Bug 9]
- Stage 7: Handshake verification: aircrack-ng / tshark Key Info / scapy rdpcap  [Bug 10]
-```
-
-### Client scanner (`modules/client_scanner.py`)
-
-Dedicated, independently testable module extracted from `handshake.py`:
-
-```python
-from modules.client_scanner import scan_clients, display_clients
-
-clients = scan_clients(
-    bssid="AA:BB:CC:DD:EE:FF",
-    channel=6,
-    monitor_interface="wlan0mon",
-    duration=12,
-)
-display_clients(clients, bssid)
-# → sorted by signal strength, deduplicated, associated stations only
+ Stage 1: Channel lock with readback verification (up to 3 retries)    [Bug 11]
+ Stage 2: ONE airodump-ng — writes cap + csv simultaneously             [S6]
+          └─ Engine B: AsyncSniffer EAPOL in background                 [Bug 8, S1]
+ Stage 3: Client discovery — reads live CSV (15 s) while capture runs   [Bugs 2–6]
+          ↓ passive handshake found? → stop immediately
+ Stage 4: Deauth loop — 64 frames/client, -D flag, 12 s wait            [Bug 7, S2, S5]
+          └─ verify at most every 3 s                                    [S4]
+          ↓ handshake found? → stop, save, return
+ Stage 5: Kill airodump-ng → hcxdumptool PMKID (colon-free filter)      [Bug 9, S3]
+ Stage 6: Triple verification: aircrack-ng / tshark Key Info / scapy    [Bug 10]
 ```
 
 ### Regression tests (`tests/test_handshake.py`)
 
-8 test classes, 22 individual test cases, zero external tool dependencies:
+14 test classes, 36+ individual test cases, zero external tool dependencies:
 
 ```bash
 pytest tests/test_handshake.py -v

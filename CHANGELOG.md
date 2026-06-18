@@ -5,6 +5,79 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [0.8.0] — 2026-06-19
+
+### Fixed — 6 surviving bugs in the post-v0.7.0 handshake pipeline
+
+**Surviving Bug 1 — `AsyncSniffer` blocks on `.stop()` — sniffer thread never exits cleanly**
+- `modules/handshake.py` (`_scapy_sniffer_thread`): switched from `sniff()` with `stop_filter`
+  to `AsyncSniffer`. `AsyncSniffer.stop(join=True)` is called from the main thread after
+  `stop_ev` is set — this takes effect immediately without waiting for the next packet.
+  Old `sniff(stop_filter=...)` polled the stop condition only when a packet arrived;
+  on quiet networks the thread hung indefinitely after capture succeeded.
+
+**Surviving Bug 2 — `aireplay-ng` fights `airodump-ng` for channel ownership**
+- `modules/handshake.py` (`_deauth_targeted`, `_deauth_broadcast`): `-D` flag
+  (`--disable_deauthentication` channel lock inside aireplay-ng) added to every
+  `aireplay-ng -0` invocation. Without `-D`, aireplay-ng tries to lock the channel
+  itself, conflicting with the running airodump-ng and producing `channel -1` errors
+  that cause deauth frames to be sent on the wrong channel or not at all.
+  `-x 1000` (burst rate) also added to ensure all frames fire quickly.
+
+**Surviving Bug 3 — hcxdumptool `--filterlist_ap` format — BSSID must NOT contain colons**
+- `modules/handshake.py` (`_run_pmkid_phase`): BSSID filter file is now written as
+  `aabbcc112233` (lowercase, no colons). hcxdumptool's `--filterlist_ap` expects the
+  colon-free hex format; writing `aa:bb:cc:11:22:33` caused it to match nothing and
+  capture all traffic indiscriminately, ignoring the target filter entirely.
+
+**Surviving Bug 4 — `verify_handshake` called on every loop tick — CPU thrash + false negatives**
+- `modules/handshake.py` (`capture_handshake`): `VERIFY_INTERVAL = 3.0` constant
+  introduced. `verify_handshake()` is now rate-limited: only called if
+  `time.time() - last_verify_time >= VERIFY_INTERVAL`. Old code called it on every
+  2-second CSV poll, running multiple expensive aircrack-ng / tshark subprocesses
+  per deauth round, sometimes consuming I/O bandwidth needed by airodump-ng.
+
+**Surviving Bug 5 — too few deauth frames + too short wait window → AP ignores deauth**
+- `modules/handshake.py` (`capture_handshake`): targeted deauth now sends `count=64`
+  frames per client (was 8–10) and the wait window after each burst is 12 seconds
+  (4 × 3 s sleeps). Modern APs and congested 2.4 GHz environments drop most deauth
+  frames; 64 frames with -x 1000 ensures enough survive to force a reassociation.
+
+**Architectural fix — two separate airodump-ng instances caused a capture gap**
+- `modules/handshake.py` (`capture_handshake`): **one** airodump-ng instance now
+  writes both `-01.cap` and `-01.csv` simultaneously by omitting `--output-format`.
+  Previous architecture used a separate `client_scanner.scan_clients()` call (its own
+  airodump-ng process) that had to terminate before the cap-capture process started,
+  leaving a window where no frames were captured. The single-instance approach
+  eliminates this gap: client discovery reads the live CSV while capture is already
+  running via `_parse_clients_from_csv()`.
+
+### Changed
+
+- **`modules/client_scanner.py` deleted** — all functionality merged into
+  `modules/handshake.py`:
+  - `WifiClient` dataclass (slimmed to `mac`, `power`, `packets` + `signal_label`
+    property) lives in `handshake.py`.
+  - `_parse_clients_from_csv(csv_path, target_bssid)` replaces the old
+    `_parse_airodump_csv`; backward-compat alias `_parse_airodump_csv` preserved.
+  - `_find_csv_file(prefix)` added alongside existing `_find_cap_file`.
+  - `lock_channel_verified` backward-compat alias for `_lock_channel` preserved.
+
+- **`tests/test_handshake.py`** — 6 new test classes added (total: 14 classes):
+  - `TestScapyStopFix` — verifies `stop_event` path through `_scapy_sniffer_thread`.
+  - `TestHcxdumptoolFilterFormat` — asserts filter file written without colons;
+    `_run_pmkid_phase` integration test.
+  - `TestSingleAirodumpInstance` — confirms airodump command omits `--output-format`;
+    CSV parsed while airodump is still running.
+  - `TestVerifyRateLimit` — verifies `VERIFY_INTERVAL >= 3.0` and `count=64` are
+    present in `capture_handshake` source.
+  - Import path updated: `from modules.handshake import _parse_clients_from_csv as
+    _parse_airodump_csv, WifiClient` (old `modules.client_scanner` import removed).
+  - `WifiClient` constructor calls updated to keyword-only `mac=`, `power=`, `packets=`
+    (3-field dataclass vs old 6-field); `signal_display` → `signal_label`.
+
+---
+
 ## [0.7.0] — 2026-06-19
 
 ### Fixed — 11 confirmed bugs in handshake capture pipeline
