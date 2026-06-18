@@ -30,14 +30,6 @@ class WordlistError(WiFiAuditorError):
     """Wordlist generation or merge failures."""
 
 
-class ScopeError(WiFiAuditorError):
-    """Unauthorized target or scope.yaml violation."""
-
-    def __init__(self, message: str, bssid: str | None = None) -> None:
-        super().__init__(message)
-        self.bssid = bssid
-
-
 class DependencyError(WiFiAuditorError):
     """Missing required binary or wrong version."""
 
