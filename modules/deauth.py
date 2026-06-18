@@ -1,12 +1,9 @@
 #!/usr/bin/env python3
 """
-Standalone Deauth Attack module with scope enforcement, consent prompt,
-and token-bucket rate limiting.
+Standalone Deauth Attack module with token-bucket rate limiting.
 
-Ethical safeguards
-──────────────────
-• Scope check  : BSSID must be listed in scope.yaml (hard block)
-• Consent      : user must type target BSSID before any frame is sent
+Safeguards
+──────────
 • Rate limiter : token bucket limits bursts; hard cap 100 fps
 • Audit log    : every burst logged with timestamp + username
 • MAC restore  : original MAC always restored on exit / signal
@@ -16,18 +13,15 @@ from __future__ import annotations
 import logging
 import os
 import re
-import sys
 import tempfile
 import threading
 import time
-from datetime import datetime
 from typing import Optional
 
 import subprocess
 
 from modules.banner import C, info, success, warn, error, print_section
 from modules.ratelimit import DeauthRateLimiter, DEFAULT_MAX_BURSTS_PER_MIN
-from modules.scope import ScopeManager
 
 logger = logging.getLogger(__name__)
 
@@ -44,9 +38,7 @@ STATS_REFRESH    =  1
 def deauth_menu(
     interface: str,
     target: Optional[dict] = None,
-    scope: Optional[ScopeManager] = None,
     deauth_limit: int = DEFAULT_MAX_BURSTS_PER_MIN,
-    fast: bool = False,
 ) -> None:
     print_section("Deauth Attack")
 
@@ -70,36 +62,6 @@ def deauth_menu(
         ssid    = target.get("ssid", bssid)
 
     info(f"AP: {ssid}  [{bssid}]  CH{channel}")
-
-    # ── Scope enforcement (hard block unless fast mode) ───────────────────────
-    if fast:
-        from rich.console import Console
-        from rich.panel import Panel
-        from rich import box
-        Console().print(Panel(
-            f"[bold red]⚡ FAST MODE — Scope & consent bypassed ⚡[/]\n\n"
-            f"Target: [bold]{ssid}[/]  [{bssid}]\n"
-            "[bold yellow]AUTHORIZED LAB / CTF USE ONLY.[/]",
-            title="[bold red]Fast Mode Active[/]",
-            box=box.DOUBLE, border_style="red",
-        ))
-        logger.warning("Deauth fast mode: bssid=%s scope_bypassed=True", bssid)
-    else:
-        if scope is not None:
-            try:
-                scope.require_authorized(bssid, "Deauth Attack")
-            except Exception as exc:
-                from rich.console import Console
-                from rich.panel import Panel
-                from rich import box
-                Console().print(Panel(
-                    f"[bold red]SCOPE VIOLATION[/]\n\n{exc}\n\n"
-                    "Add the target to scope.yaml:  wifi-auditor --scope-wizard",
-                    border_style="red", box=box.DOUBLE,
-                ))
-                return
-        # ── Consent prompt ────────────────────────────────────────────────────
-        _consent_prompt(bssid, ssid, "Deauth Attack")
 
     # ── Sub-menu ──────────────────────────────────────────────────────────────
     print(f"""
@@ -191,54 +153,6 @@ def deauth_menu(
 
     _run_attack(interface, bssid, ssid, channel, clients,
                 do_spoof, continuous, burst_count, limiter)
-
-
-###############################################################################
-# Consent prompt
-###############################################################################
-
-def _consent_prompt(bssid: str, ssid: str, operation: str) -> None:
-    from rich.console import Console
-    from rich.panel import Panel
-    from rich import box
-    con = Console()
-    con.print()
-    con.print(Panel(
-        f"[bold red]⚠  DEAUTH WARNING  ⚠[/]\n\n"
-        f"You are about to send deauth frames to:\n"
-        f"  [bold]BSSID:[/] {bssid}\n"
-        f"  [bold]SSID: [/] {ssid}\n\n"
-        "This disrupts ALL clients on the network.\n"
-        "[bold yellow]Only proceed with written consent from the network owner.[/]\n\n"
-        "To confirm, type the target BSSID exactly below:",
-        title=f"[bold red]{operation}[/]",
-        box=box.DOUBLE, border_style="red",
-    ))
-    sys.stdout.write("\n  Type BSSID to confirm: ")
-    sys.stdout.flush()
-    try:
-        entered = input("").strip().upper()
-    except KeyboardInterrupt:
-        sys.exit(0)
-
-    if entered != bssid.upper():
-        con.print(f"[red]BSSID mismatch. Aborting.[/]")
-        sys.exit(1)
-
-    confirm = input("  Proceed? [y/N]: ").strip().lower()
-    if confirm != "y":
-        sys.exit(0)
-
-    try:
-        username = os.getlogin()
-    except OSError:
-        username = os.environ.get("USER", "unknown")
-
-    logger.info(
-        "DEAUTH_CONSENT user=%s bssid=%s operation=%s ts=%s",
-        username, bssid, operation, datetime.now().isoformat(),
-    )
-    con.print(f"[green]✓ Consent recorded for {bssid} by {username}[/]")
 
 
 ###############################################################################

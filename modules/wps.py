@@ -3,8 +3,6 @@
 WPS attack module: Pixie-Dust, PIN spray, and full PIN brute-force.
 
 Backends: reaver (primary), bully (alternative).
-Scope enforcement mirrors handshake.py — requires authorized BSSID + consent
-unless fast=True is set (lab/CTF mode — prints red warning instead).
 
 Attack modes
 ────────────
@@ -12,7 +10,7 @@ Attack modes
                    cracks vulnerable APs in <30 s.
 [2] Vendor PIN Spray  OUI-matched defaults + 30 most common PINs.
 [3] Full Brute-Force  all ~11 000 valid WPS PINs (reaver loop).
-[4] Wash Scan      passive WPS beacon sniffer — no frames sent, no scope needed.
+[4] Wash Scan      passive WPS beacon sniffer — no frames sent, read-only.
 """
 from __future__ import annotations
 
@@ -27,8 +25,7 @@ from datetime import datetime
 from typing import Optional
 
 from modules.banner import C, info, success, warn, error, found, print_section
-from modules.exceptions import DependencyError, ScopeError
-from modules.scope import ScopeManager
+from modules.exceptions import DependencyError
 
 logger = logging.getLogger(__name__)
 
@@ -78,7 +75,7 @@ COMMON_PINS = [
 
 
 ###############################################################################
-# WPS capability detection  (passive, read-only — no scope needed)
+# WPS capability detection  (passive, read-only)
 ###############################################################################
 
 def detect_wps_capability(
@@ -151,13 +148,8 @@ def detect_wps_capability(
 def wps_menu(
     interface: str,
     target: Optional[dict],
-    scope: Optional[ScopeManager],
-    fast: bool = False,
 ) -> None:
-    """
-    Interactive WPS attack menu.  Call with fast=True to bypass scope/consent
-    in authorized lab environments (prints red warning instead).
-    """
+    """Interactive WPS attack menu."""
     print_section("WPS Attack Module")
 
     # ── Resolve target ────────────────────────────────────────────────────────
@@ -186,7 +178,7 @@ def wps_menu(
   {C.GREEN}[1]{C.RESET} Pixie-Dust       {C.DIM}– offline nonce attack, cracks in seconds if vulnerable{C.RESET}
   {C.GREEN}[2]{C.RESET} Vendor PIN Spray {C.DIM}– OUI-matched defaults + {len(COMMON_PINS)} common PINs{C.RESET}
   {C.GREEN}[3]{C.RESET} Full PIN Brute   {C.DIM}– all ~11 000 valid WPS PINs via reaver{C.RESET}
-  {C.CYAN}[4]{C.RESET} Wash Scan        {C.DIM}– detect WPS-enabled APs (read-only, no scope needed){C.RESET}
+  {C.CYAN}[4]{C.RESET} Wash Scan        {C.DIM}– detect WPS-enabled APs (read-only, passive){C.RESET}
   {C.RED}[0]{C.RESET} Back
 """)
 
@@ -201,18 +193,6 @@ def wps_menu(
         error(f"Unknown option: {choice!r}")
         return
 
-    # ── Authorization gate ────────────────────────────────────────────────────
-    if fast:
-        _fast_mode_warning(bssid, ssid)
-    else:
-        try:
-            _wps_scope_and_consent(scope, bssid, ssid, choice)
-        except ScopeError as e:
-            error(f"Scope violation: {e}")
-            return
-        except SystemExit:
-            return
-
     # ── Backend selection ─────────────────────────────────────────────────────
     try:
         backend = _select_backend()
@@ -226,91 +206,6 @@ def wps_menu(
         _pin_spray_attack(interface, bssid, channel, ssid, backend)
     elif choice == "3":
         _full_bruteforce(interface, bssid, channel, ssid, backend)
-
-
-###############################################################################
-# Scope + consent  (mirrors handshake.py pattern exactly)
-###############################################################################
-
-def _fast_mode_warning(bssid: str, ssid: str) -> None:
-    from rich.console import Console
-    from rich import box
-    from rich.panel import Panel
-    Console().print(Panel(
-        f"[bold red]⚡ FAST MODE — SCOPE & CONSENT BYPASSED ⚡[/]\n\n"
-        f"Target: [bold]{ssid}[/]  [{bssid}]\n\n"
-        "[bold yellow]This mode is for AUTHORIZED LAB / CTF environments ONLY.\n"
-        "Using this against networks you do not own is ILLEGAL.[/]",
-        title="[bold red]Fast Mode Active[/]",
-        box=box.DOUBLE,
-        border_style="red",
-    ))
-    logger.warning("WPS fast mode: bssid=%s ssid=%s scope_bypassed=True", bssid, ssid)
-
-
-def _wps_scope_and_consent(
-    scope: Optional[ScopeManager],
-    bssid: str,
-    ssid: str,
-    mode: str,
-) -> None:
-    from rich.console import Console
-    from rich import box
-    from rich.panel import Panel
-    import sys
-
-    if scope is not None:
-        scope.require_authorized(bssid, "WPS attack")
-
-    op_names = {
-        "1": "WPS Pixie-Dust",
-        "2": "WPS PIN Spray",
-        "3": "WPS PIN Brute-Force",
-    }
-    operation = op_names.get(mode, "WPS Attack")
-    con = Console()
-
-    con.print()
-    con.print(Panel(
-        f"[bold red]⚠  FRAME INJECTION WARNING  ⚠[/]\n\n"
-        f"You are about to perform: [bold]{operation}[/]\n\n"
-        f"  [bold]BSSID:[/] {bssid}\n"
-        f"  [bold]SSID: [/] {ssid}\n\n"
-        "WPS attacks send probe/auth frames to the target AP.\n"
-        "[bold yellow]Only proceed if you have WRITTEN authorization from the owner.[/]\n\n"
-        "To confirm, type the target BSSID exactly below:",
-        title="[bold red]WPS Authorization Required[/]",
-        box=box.DOUBLE,
-        border_style="red",
-    ))
-
-    sys.stdout.write(f"\n  Type BSSID to confirm: ")
-    sys.stdout.flush()
-    try:
-        entered = input("").strip().upper()
-    except KeyboardInterrupt:
-        con.print("[red]Aborted.[/]")
-        raise SystemExit(0)
-
-    if entered != bssid:
-        con.print(f"[red]BSSID mismatch (entered {entered!r}, expected {bssid!r}). Aborting.[/]")
-        raise SystemExit(1)
-
-    confirm = input("  Proceed? [y/N]: ").strip().lower()
-    if confirm != "y":
-        con.print("[red]Aborted.[/]")
-        raise SystemExit(0)
-
-    try:
-        username = os.getlogin()
-    except OSError:
-        username = os.environ.get("USER", "unknown")
-
-    logger.info(
-        "CONSENT_GRANTED user=%s bssid=%s operation=%s ts=%s",
-        username, bssid, operation, datetime.now().isoformat(),
-    )
-    con.print(f"[green]✓ Consent logged for {bssid}[/]")
 
 
 ###############################################################################
@@ -500,7 +395,7 @@ def _full_bruteforce(
 
 
 ###############################################################################
-# Wash scan  (read-only, no scope needed)
+# Wash scan  (read-only, passive)
 ###############################################################################
 
 def _wash_scan(interface: str, duration: int = 25) -> None:

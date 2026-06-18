@@ -555,9 +555,6 @@ def capture_handshake(
 
     Returns path to capture file on success, None on total failure.
     """
-    from modules.scope import check_scope
-    check_scope(bssid)
-
     os.makedirs(output_dir, exist_ok=True)
     ts      = time.strftime("%Y%m%d_%H%M%S")
     safe    = re.sub(r"[^a-zA-Z0-9_\-]", "_", ssid)[:20]
