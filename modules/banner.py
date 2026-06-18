@@ -164,13 +164,6 @@ def _get_interface() -> str:
     return "not set"
 
 
-def _get_scope() -> str:
-    for candidate in ("scope.yaml", "scope.yml", "config/scope.yaml"):
-        if os.path.exists(candidate):
-            return "loaded"
-    return "none"
-
-
 # ─── Banner sections ──────────────────────────────────────────────────────────
 
 def _color_row(row: str) -> Text:
@@ -252,16 +245,13 @@ def _print_disclaimer() -> None:
     typewrite(sep, style="color(238) dim", delay=0.005)
 
 
-def _print_status(iface: str, scope: str, ts: str) -> None:
+def _print_status(iface: str, ts: str) -> None:
     """Segment-by-segment ANSI typewriter status line."""
     console.print()
     segments = [
         ("  ◈ ",        "color(51)"),
         ("interface: ",  "color(240) dim"),
         (iface,          "color(87) bold"),
-        ("   ◈ ",        "color(51)"),
-        ("scope: ",      "color(240) dim"),
-        (scope,          "color(87) bold"),
         ("   ◈ ",        "color(51)"),
         (ts,             "color(87) bold"),
     ]
@@ -318,7 +308,6 @@ def print_banner() -> None:
     os.system("clear" if os.name == "posix" else "cls")
 
     iface = _get_interface()
-    scope = _get_scope()
     ts    = datetime.now().strftime("%Y-%m-%d  %H:%M:%S")
 
     _print_art()
@@ -328,7 +317,7 @@ def print_banner() -> None:
     console.print()
     _print_quote(author, quote)
     _print_disclaimer()
-    _print_status(iface, scope, ts)
+    _print_status(iface, ts)
     _print_enter_prompt()
 
 

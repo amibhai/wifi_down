@@ -7,14 +7,12 @@ Usage (interactive):
   sudo python3 -m wifi_auditor.cli
 
 Usage (headless/automated):
-  sudo wifi-auditor --headless --scope scope.yaml --target AA:BB:CC:DD:EE:FF --auto
+  sudo wifi-auditor --headless --target AA:BB:CC:DD:EE:FF --auto
 
 Special commands:
   wifi-auditor --preflight              Run pre-flight dependency checker
-  wifi-auditor --scope-wizard           Interactive scope.yaml builder
   wifi-auditor --report SESSION_ID      Generate pentest report (Markdown + JSON)
   wifi-auditor --report SESSION_ID --pdf  Generate PDF report alongside Markdown
-  wifi-auditor --verify-log             Verify HMAC-chained audit log integrity
   wifi-auditor --refresh-oui            Re-download IEEE OUI database
   wifi-auditor --prism                  Launch PRISM rich TUI (experimental)
   wifi-auditor --lang LANG              Override UI language (en/es/fr/ar/hi/zh)
@@ -36,7 +34,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 from modules.utils import (
     check_root, check_dependencies, setup_logging,
     get_wireless_interfaces, enable_monitor_mode, disable_monitor_mode,
-    verify_audit_log, emit_session_summary,
+    emit_session_summary,
 )
 from modules.banner import C, print_banner, print_compact_header, print_menu, info, success, warn, error
 from modules.scanner import scan_networks, select_network
@@ -46,7 +44,6 @@ from modules.cracker import cracker_menu
 from modules.wep import wep_crack_menu
 from modules.deauth import deauth_menu
 from modules.wps import wps_menu, detect_wps_capability
-from modules.scope import ScopeManager, scope_wizard
 from modules.state import StateManager, Stage
 from modules.preflight import run_preflight, run_preflight_with_autofix, SENTINEL_FILE
 from modules.sequencer import AttackSequencer
@@ -70,10 +67,8 @@ state: dict = {
     "session_id":        None,      # active session ID
 }
 
-_scope:     ScopeManager = ScopeManager()
 _sm:        StateManager  = StateManager()
 _sequencer  = AttackSequencer()
-_FAST_MODE: bool          = False
 _NEURAL_MODEL: str        = "gpt-4o-mini"
 
 
@@ -276,8 +271,7 @@ def action_wps() -> None:
     if not state["monitor_interface"]:
         error(t("error.no_interface"))
         return
-    wps_menu(state["monitor_interface"], state.get("target"),
-             scope=_scope, fast=_FAST_MODE)
+    wps_menu(state["monitor_interface"], state.get("target"))
 
 
 def action_full_auto() -> None:
@@ -320,7 +314,7 @@ def action_full_auto() -> None:
     if wps["enabled"] and not wps["locked"]:
         ver_tag = f" v{wps['version']}" if wps["version"] else ""
         success(f"WPS{ver_tag} enabled and unlocked → taking WPS attack path")
-        wps_menu(state["monitor_interface"], target, scope=_scope, fast=_FAST_MODE)
+        wps_menu(state["monitor_interface"], target)
         return
 
     if wps["enabled"] and wps["locked"]:
@@ -371,8 +365,7 @@ def action_deauth() -> None:
     if not state["monitor_interface"]:
         error(t("error.no_interface"))
         return
-    deauth_menu(state["monitor_interface"], state.get("target"),
-                scope=_scope, fast=_FAST_MODE)
+    deauth_menu(state["monitor_interface"], state.get("target"))
 
 
 def action_ghost() -> None:
@@ -407,8 +400,6 @@ def action_phantom() -> None:
     phantom_menu(
         interface=state["monitor_interface"],
         target=state.get("target"),
-        scope=_scope,
-        fast=_FAST_MODE,
     )
     state["phantom_active"] = True
 
@@ -481,20 +472,12 @@ def action_report(session_id: str, generate_pdf: bool = False) -> None:
 ###############################################################################
 
 def run_headless(
-    scope_file: str,
     target_bssid: str,
     iface: str = "",
     deauth_limit: int = DEFAULT_MAX_BURSTS_PER_MIN,
 ) -> int:
     from modules.utils import setup_logging
     setup_logging()
-
-    scope = ScopeManager(Path(scope_file))
-    try:
-        scope.require_authorized(target_bssid, "headless audit")
-    except Exception as exc:
-        logger.error("Scope violation: %s", exc)
-        return 1
 
     sm = StateManager()
     t_start = time.monotonic()
@@ -664,12 +647,9 @@ def _build_parser() -> argparse.ArgumentParser:
 Examples:
   sudo wifi-auditor                                   # interactive menu
   sudo wifi-auditor --preflight                       # pre-flight check
-  sudo wifi-auditor --scope-wizard                    # build scope.yaml
-  sudo wifi-auditor --headless --scope scope.yaml \\
-       --target AA:BB:CC:DD:EE:FF --auto             # headless scan
+  sudo wifi-auditor --headless --target AA:BB:CC:DD:EE:FF --auto  # headless scan
   wifi-auditor --report 20260604_120000               # generate report
   wifi-auditor --report 20260604_120000 --pdf         # report + PDF
-  wifi-auditor --verify-log                           # verify audit log
   sudo wifi-auditor --prism                           # PRISM TUI (experimental)
 """,
     )
@@ -680,10 +660,6 @@ Examples:
     )
     p.add_argument("--preflight",    action="store_true",
                    help="Run pre-flight checker and exit")
-    p.add_argument("--scope-wizard", action="store_true",
-                   help="Run interactive scope.yaml wizard")
-    p.add_argument("--scope",        metavar="FILE",
-                   help="Path to scope.yaml (default: ./scope.yaml)")
     p.add_argument("--headless",     action="store_true",
                    help="Non-interactive automated mode")
     p.add_argument("--target",       metavar="BSSID",
@@ -699,8 +675,6 @@ Examples:
                    help="Generate pentest report for session")
     p.add_argument("--pdf",          action="store_true",
                    help="Include PDF output with --report")
-    p.add_argument("--verify-log",   action="store_true",
-                   help="Verify HMAC-chained audit log")
     p.add_argument("--refresh-oui",  action="store_true",
                    help="Re-download IEEE OUI database")
     p.add_argument("--prism",        action="store_true",
@@ -715,14 +689,6 @@ Examples:
                    help="Diagnose wireless interface and monitor mode status, then exit")
     p.add_argument("--debug",        action="store_true",
                    help="Enable DEBUG logging")
-    p.add_argument(
-        "--fast",
-        action="store_true",
-        help=(
-            "FAST / LAB MODE — skip scope.yaml check and consent prompts. "
-            "Prints a red warning. FOR AUTHORIZED LAB / CTF ENVIRONMENTS ONLY."
-        ),
-    )
     return p
 
 
@@ -759,7 +725,7 @@ ACTIONS = {
 
 
 def main() -> None:
-    global _scope, _FAST_MODE, _NEURAL_MODEL
+    global _NEURAL_MODEL
 
     parser = _build_parser()
     args   = parser.parse_args()
@@ -772,33 +738,9 @@ def main() -> None:
 
     _NEURAL_MODEL = args.neural_model
 
-    if getattr(args, "fast", False):
-        _FAST_MODE = True
-        from rich.console import Console
-        from rich import box as rbox
-        from rich.panel import Panel
-        Console().print(Panel(
-            "[bold red]⚡  FAST / LAB MODE  ⚡[/]\n\n"
-            "Scope enforcement and consent prompts are DISABLED.\n"
-            "[bold yellow]Only use this on networks you own or have written authorization to test.[/]\n"
-            "Unauthorized use is illegal under CFAA / CMA / IT Act 2000.",
-            title="[bold red]Warning — Reduced Safeguards[/]",
-            box=rbox.DOUBLE,
-            border_style="red",
-        ))
-        logger.warning("FAST_MODE enabled — scope/consent bypassed")
-
     # ── Special subcommands (no root required) ────────────────────────────────
     if args.preflight:
         run_preflight(exit_on_failure=True)
-        return
-
-    if getattr(args, "scope_wizard"):
-        scope_wizard()
-        return
-
-    if args.verify_log:
-        verify_audit_log()
         return
 
     if args.refresh_oui:
@@ -813,10 +755,6 @@ def main() -> None:
     if getattr(args, "check_interface", False):
         _action_check_interface()
         return
-
-    # ── Load scope file ───────────────────────────────────────────────────────
-    scope_path = Path(args.scope) if args.scope else Path("scope.yaml")
-    _scope = ScopeManager(scope_path)
 
     # ── Check for incomplete sessions ─────────────────────────────────────────
     incomplete = StateManager.list_incomplete()
@@ -841,11 +779,8 @@ def main() -> None:
     if args.headless or args.auto:
         if not args.target:
             parser.error("--headless requires --target BSSID")
-        if not scope_path.exists():
-            parser.error("--headless requires a valid --scope file")
         check_root()
         sys.exit(run_headless(
-            scope_file=str(scope_path),
             target_bssid=args.target,
             iface=args.interface or "",
             deauth_limit=args.deauth_limit,
@@ -863,7 +798,6 @@ def main() -> None:
     check_root()
     _check_first_run()
     check_dependencies()
-    scope_label = str(scope_path) if scope_path.exists() else None
     print_banner()
 
     import signal
