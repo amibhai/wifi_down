@@ -8,8 +8,6 @@ Three personalities:
 
 Captive portal uses vendor-matched login pages derived from OUI database.
 Every credential submission is logged to captures/phantom_<timestamp>.log.
-
-HARD BLOCK: requires scope authorization. No --fast bypass.
 """
 from __future__ import annotations
 
@@ -33,9 +31,8 @@ from rich import box
 from rich.console import Console
 from rich.panel import Panel
 
-from .exceptions import DependencyError, ScopeError
+from .exceptions import DependencyError
 from .runner import SubprocessRunner
-from .scope import ScopeManager
 
 logger = logging.getLogger(__name__)
 console = Console()
@@ -297,19 +294,8 @@ def _audit(event: str, bssid: str, personality: int, extra: Optional[dict] = Non
 def phantom_menu(
     interface: str,
     target: Optional[dict],
-    scope: Optional[ScopeManager] = None,
-    fast: bool = False,
 ) -> None:
-    """
-    Interactive Phantom AP launcher. Called from CLI menu.
-
-    Parameters
-    ----------
-    interface : monitor-mode interface name
-    target    : dict from scanner with bssid, ssid, channel, vendor, etc.
-    scope     : ScopeManager instance — HARD BLOCK if target not authorized
-    fast      : ignored (Phantom AP never bypasses scope)
-    """
+    """Interactive Phantom AP launcher. Called from CLI menu."""
     from .i18n import t
 
     console.print()
@@ -333,19 +319,6 @@ def phantom_menu(
     ssid    = target.get("ssid", "UNKNOWN")
     channel = int(target.get("channel", 6) or 6)
     vendor  = (target.get("vendor") or "").lower()
-
-    # ── HARD scope block — no bypass ─────────────────────────────────────
-    if not scope or not scope.is_authorized(bssid):
-        console.print(Panel(
-            f"[bold red]SCOPE BLOCK[/bold red]\n\n"
-            f"BSSID [cyan]{bssid}[/cyan] is not in scope.yaml.\n"
-            "Phantom AP cannot be launched without explicit written authorization.\n\n"
-            "Add the target to scope.yaml first:  [bold]wifi-auditor --scope-wizard[/bold]",
-            border_style="red",
-            box=box.DOUBLE,
-        ))
-        _audit("scope_block", bssid, 0)
-        return
 
     # ── Personality selection ─────────────────────────────────────────────
     console.print(

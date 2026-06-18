@@ -11,7 +11,7 @@ This module cross-references the target vendor against a built-in database of
 known PSK generation algorithms and generates a targeted wordlist
 (Strategy 13: Temporal) fed directly into the cracking engine.
 
-Entirely offline — no frame injection, no network requests. No scope required.
+Entirely offline — no frame injection, no network requests.
 If the crack succeeds using a temporal wordlist, it's flagged in the report as:
 "PSK was predictable from public hardware information — Critical"
 """

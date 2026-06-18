@@ -2,7 +2,6 @@
 BEACON HISTORIAN — Passive long-term AP behavioral profiling.
 
 Entirely passive (no frame injection). Runs as a background thread.
-No scope authorization required.
 
 Tracks:
   - Beacon interval drift (reboot / firmware change indicator)
@@ -400,16 +399,12 @@ def historian_menu(
     interface: str,
     target: Optional[dict],
 ) -> Optional[NetworkBehavioralProfile]:
-    """
-    Interactive Beacon Historian launcher.
-    Passive — no scope check required.
-    """
+    """Interactive Beacon Historian launcher. Passive — no frame injection."""
     console.print()
     console.print(Panel(
         "[bold #00D4AA]BEACON HISTORIAN[/bold #00D4AA]\n\n"
         "[dim]Passive behavioral profiling of a target AP.\n"
-        "No frame injection. No scope authorization required.\n"
-        "Runs as a background thread alongside other modules.[/dim]",
+        "No frame injection. Runs as a background thread alongside other modules.[/dim]",
         border_style="#00D4AA",
     ))
     console.print()
