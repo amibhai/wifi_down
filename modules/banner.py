@@ -6,14 +6,12 @@ from __future__ import annotations
 
 import os
 import random
-import re
 import shutil
 import subprocess
 import sys
 import textwrap
 import time
 from datetime import datetime
-from pathlib import Path
 from typing import Optional
 
 from rich.console import Console
@@ -111,16 +109,6 @@ _S_CORNER = Style(color="color(45)", bold=True)
 
 _RESET = "\033[0m"
 
-# ─── Portrait image config ────────────────────────────────────────────────────
-
-_PORTRAIT  = Path(__file__).parent.parent / "assets" / "ami.jpg"
-_IMG_COLS  = 44   # terminal columns the portrait occupies
-_TEXT_COLS = 70   # visual width reserved for left text column
-_IMG_GAP   = 2    # blank columns between text and image
-_IMG_START = _TEXT_COLS + _IMG_GAP + 1   # 1-indexed terminal column
-
-_ANSI_ESC_RE = re.compile(r"(\033\[[0-9;]*m)")
-
 # ─── Core primitives ──────────────────────────────────────────────────────────
 
 def _ansi(style_str: str) -> str:
@@ -174,136 +162,6 @@ def _get_interface() -> str:
     except Exception:
         pass
     return "not set"
-
-
-# ─── Image rendering ─────────────────────────────────────────────────────────
-
-def _render_image_blocks(path: str, term_width: int = _IMG_COLS) -> list[str]:
-    """Render image as ANSI true-color half-block (▀/▄) rows.
-
-    Each terminal row encodes 2 vertical pixel rows via foreground/background
-    RGB colour codes. Returns [] if Pillow is not installed or image missing.
-    """
-    try:
-        from PIL import Image as _PIL
-    except ImportError:
-        return []
-    try:
-        img = _PIL.open(path).convert("RGBA")
-    except Exception:
-        return []
-    iw, ih = img.size
-    px_w = term_width
-    px_h = int(px_w * ih / iw)
-    px_h = px_h + (px_h % 2)   # must be even
-    img  = img.resize((px_w, px_h), _PIL.LANCZOS)
-    pxs  = img.load()
-
-    lines: list[str] = []
-    for r in range(0, px_h, 2):
-        parts: list[str] = []
-        for c in range(px_w):
-            r1, g1, b1, a1 = pxs[c, r]
-            r2, g2, b2, a2 = pxs[c, r + 1] if r + 1 < px_h else (0, 0, 0, 255)
-            if a1 < 128:
-                r1 = g1 = b1 = 0
-            if a2 < 128:
-                r2 = g2 = b2 = 0
-            dark1 = (r1 + g1 + b1) < 30
-            dark2 = (r2 + g2 + b2) < 30
-            if dark1 and dark2:
-                parts.append(" ")
-            elif dark1:
-                parts.append(f"\033[38;2;{r2};{g2};{b2}m▄\033[0m")
-            elif dark2:
-                parts.append(f"\033[38;2;{r1};{g1};{b1}m▀\033[0m")
-            else:
-                parts.append(
-                    f"\033[38;2;{r1};{g1};{b1}m"
-                    f"\033[48;2;{r2};{g2};{b2}m▀\033[0m"
-                )
-        lines.append("".join(parts))
-    return lines
-
-
-def _ansi_str(text: str, style_str: str) -> str:
-    """Wrap *text* in ANSI escape codes derived from a style string."""
-    esc = _ansi(style_str)
-    return f"{esc}{text}{_RESET}" if esc else text
-
-
-def _rich_to_ansi(obj) -> str:
-    """Render a Rich renderable to a plain ANSI string (no trailing newline)."""
-    import io as _io
-    sio = _io.StringIO()
-    cap = Console(file=sio, force_terminal=True, legacy_windows=False,
-                  highlight=False, width=80)
-    cap.print(obj, end="")
-    return sio.getvalue()
-
-
-def _typewrite_ansi(text: str, delay: float = 0.010) -> None:
-    """Typewrite visible chars one-by-one; flush ANSI escape codes instantly."""
-    for token in _ANSI_ESC_RE.split(text):
-        if _ANSI_ESC_RE.fullmatch(token):
-            sys.stdout.write(token)   # colour code — no delay
-        else:
-            for ch in token:
-                sys.stdout.write(ch)
-                sys.stdout.flush()
-                time.sleep(delay)
-
-
-def _build_left_column(author: str, quote: str, iface: str, ts: str) -> list[str]:
-    """Pre-render all left-side banner lines as ANSI strings (no newlines)."""
-    sep = _ansi_str(
-        "  ─────────────────────────────────────────────────", "color(238) dim"
-    )
-    L: list[str] = []
-
-    for row in WIFI_DOWN_ART.splitlines():
-        if row.strip():
-            L.append(_rich_to_ansi(_color_row(row)))
-
-    L.append("")
-    L.append(
-        _ansi_str("── made by ", "color(240) italic")
-        + _ansi_str("Ami", "color(213) bold")
-        + _ansi_str(" ──", "color(240) italic")
-    )
-    L.append("")
-    L.append(sep)
-    L.append("")
-    wrapped = textwrap.fill(quote, width=58).splitlines()
-    for i, ln in enumerate(wrapped):
-        prefix = "   ❝  " if i == 0 else "      "
-        suffix = "  ❞" if i == len(wrapped) - 1 else ""
-        L.append(_ansi_str(prefix + ln + suffix, "color(252) italic"))
-    L.append("")
-    L.append(_ansi_str(f"        — {author}", "color(87) bold"))
-    L.append("")
-    L.append(sep)
-    L.append("")
-    L.append(_ansi_str("  ⚠  LEGAL NOTICE", "color(196) bold"))
-    L.append("")
-    for ln in (
-        "  Use only on networks you own or have written",
-        "  permission to test. Unauthorized access is a",
-        "  criminal offence under CFAA, IT Act 2000 and",
-        "  similar laws worldwide. No liability accepted.",
-    ):
-        L.append(_ansi_str(ln, "color(252)"))
-    L.append("")
-    L.append(sep)
-    L.append("")
-    L.append(
-        _ansi_str("  ◈ ", "color(51)")
-        + _ansi_str("interface: ", "color(240) dim")
-        + _ansi_str(iface, "color(87) bold")
-        + _ansi_str("   ◈ ", "color(51)")
-        + _ansi_str(ts, "color(87) bold")
-    )
-    return L
 
 
 # ─── Banner sections ──────────────────────────────────────────────────────────
@@ -437,50 +295,29 @@ def _print_enter_prompt() -> None:
 def print_banner() -> None:
     """Full launch banner — called once at startup.
 
-    When assets/ami.jpg is present and Pillow is installed, renders the portrait
-    on the right side using true-color half-block pixels (▀/▄) while typewriting
-    the text panel on the left. Falls back to text-only when the image is absent.
+    Flow:
+        1. clear screen
+        2. scan-line art reveal (_print_art)
+        3. right-aligned 'made by अ म ी' (_print_made_by)
+        4. one random hacker quote (_print_quote)
+        5. plain typewriter disclaimer (_print_disclaimer)
+        6. segment typewriter status bar (_print_status)
+        7. typewriter + pulsing Enter prompt (_print_enter_prompt)
+           → console.clear() after Enter
     """
     os.system("clear" if os.name == "posix" else "cls")
 
-    iface         = _get_interface()
-    ts            = datetime.now().strftime("%Y-%m-%d  %H:%M:%S")
+    iface = _get_interface()
+    ts    = datetime.now().strftime("%Y-%m-%d  %H:%M:%S")
+
+    _print_art()
+    _print_made_by()
+
     author, quote = random.choice(QUOTES)
-
-    img_lines = _render_image_blocks(str(_PORTRAIT)) if _PORTRAIT.exists() else []
-
-    if not img_lines:
-        # Text-only fallback
-        _print_art()
-        _print_made_by()
-        console.print()
-        _print_quote(author, quote)
-        _print_disclaimer()
-        _print_status(iface, ts)
-        _print_enter_prompt()
-        return
-
-    txt_lines = _build_left_column(author, quote, iface, ts)
-    n_rows    = max(len(txt_lines), len(img_lines))
-
-    # Reserve vertical space so the terminal doesn't scroll mid-draw
-    sys.stdout.write("\n" * n_rows)
-    sys.stdout.flush()
-
-    # Paint portrait on the right side (instant — cursor-jump per row)
-    for i, row in enumerate(img_lines):
-        sys.stdout.write(f"\033[{i + 1};{_IMG_START}H{row}")
-    sys.stdout.flush()
-
-    # Typewrite text panel on the left side
-    for i, line in enumerate(txt_lines):
-        sys.stdout.write(f"\033[{i + 1};1H")
-        _typewrite_ansi(line, delay=0.008)
-
-    # Park cursor below everything before the Enter prompt
-    sys.stdout.write(f"\033[{n_rows + 1};1H\n")
-    sys.stdout.flush()
-
+    console.print()
+    _print_quote(author, quote)
+    _print_disclaimer()
+    _print_status(iface, ts)
     _print_enter_prompt()
 
 
