@@ -436,12 +436,35 @@ def _pick_rule_file() -> str | None:
 ###############################################################################
 
 def _has_handshake(cap_file: str) -> bool:
-    result = subprocess.run(
-        ["aircrack-ng", cap_file],
-        capture_output=True, text=True, timeout=15,
-    )
-    output = result.stdout + result.stderr
-    return bool(re.search(r"WPA\s*\(\s*[1-9]", output, re.IGNORECASE))
+    # aircrack-ng without -w opens an interactive menu and blocks forever.
+    # Write a dummy wordlist so it runs non-interactively and prints the
+    # "WPA (N handshake)" summary line, then exits.
+    import tempfile
+    try:
+        with tempfile.NamedTemporaryFile(mode='w', suffix='.txt',
+                                         delete=False, prefix='wifiaudit_chk_') as tf:
+            tf.write('wifi_auditor_verify_impossible_xyzzy\n')
+            wl_path = tf.name
+    except OSError:
+        wl_path = None
+
+    cmd = ['aircrack-ng', '-a', '2']
+    if wl_path:
+        cmd += ['-w', wl_path]
+    cmd.append(cap_file)
+
+    try:
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=20)
+        output = result.stdout + result.stderr
+        return bool(re.search(r"WPA\s*\(\s*[1-9]", output, re.IGNORECASE))
+    except subprocess.TimeoutExpired:
+        return False
+    finally:
+        if wl_path:
+            try:
+                os.remove(wl_path)
+            except OSError:
+                pass
 
 
 def _count_lines(path: str) -> int:
