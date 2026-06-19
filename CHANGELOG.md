@@ -5,6 +5,29 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [0.8.1] — 2026-06-19
+
+### Fixed
+
+- **Root cause #1 — concurrent airodump-ng processes (Phase 1)**
+  The old code started both the scan airodump and the capture airodump at the same time on the same monitor interface. On most drivers, the second process either silently fails to open the device, gets starved of frames, or races the first process on interface state (channel, flags). Since stderr was sent to DEVNULL, the failure was invisible. The fix: run the scan airodump alone, kill it when done, then start the dedicated capture airodump with the interface to itself.
+
+- **Root cause #2 — channel drift after TX**
+  Some adapters change the channel or reset after aireplay-ng finishes injecting. We now call `_set_channel()` at the top of every burst cycle before the deauth frames go out.
+
+- **Root cause #3 — no RX recovery delay**
+  After the burst completes (TX path), we immediately started listening. Adding a 0.5s settle gives the adapter time to fully switch back to RX mode before the reassoc window opens.
+
+### Changed
+
+- **Improvement — airodump health check inside the reassoc window**
+  Previously airodump was only checked at the burst boundary. If it died during the 30-second window, all handshake frames were lost silently. Now it's checked every second and restarted immediately if dead.
+
+- **Improvement — cap file size in countdown**
+  The display now shows `cap: 12KB` during the countdown. If that number stays at 0KB throughout, it tells you airodump isn't capturing anything (adapter issue, wrong interface), which makes diagnosis much easier.
+
+---
+
 ## [0.8.0] — 2026-06-19
 
 ### Fixed — 7 surviving bugs in the post-v0.7.0 handshake pipeline
