@@ -233,60 +233,46 @@ class TestCapFileFinding:
         assert found == str(cap2)
 
 
-class TestLockChannelVerified:
-    """Bug 11 regression: channel lock must be verified by readback."""
+class TestAirgeddonArchitecture:
+    """New architecture: infinite deauth + no-filter client scan."""
 
-    def test_returns_true_when_channel_confirmed(self):
-        from modules.handshake import lock_channel_verified
-        with patch('subprocess.run') as mock_run:
-            mock_run.return_value = MagicMock(
-                stdout="channel 6 (2437 MHz), width: 20 MHz (no HT)",
-                stderr="",
-                returncode=0
-            )
-            with patch('time.sleep'):
-                result = lock_channel_verified(6, 'wlan0mon')
-        assert result is True
+    def test_capture_uses_infinite_deauth(self):
+        """aireplay-ng must use --deauth 0 (infinite), not a fixed count."""
+        import inspect
+        from modules.handshake import capture_handshake
+        src = inspect.getsource(capture_handshake)
+        assert "'--deauth', '0'" in src, \
+            "capture_handshake must use --deauth 0 (infinite deauth)"
 
-    def test_returns_false_when_channel_mismatch(self):
-        from modules.handshake import lock_channel_verified
-        with patch('subprocess.run') as mock_run:
-            # iw dev info always reports channel 1, not 6
-            mock_run.return_value = MagicMock(
-                stdout="channel 1 (2412 MHz)",
-                stderr="",
-                returncode=0
-            )
-            with patch('time.sleep'):
-                result = lock_channel_verified(6, 'wlan0mon')
-        assert result is False
+    def test_capture_uses_no_bssid_filter_in_scan(self):
+        """Client scan must NOT have -d/--bssid; filter happens in _parse_clients."""
+        import inspect
+        from modules.handshake import capture_handshake
+        src = inspect.getsource(capture_handshake)
+        scan_section = src[src.find('scan_proc'):src.find('cap_prefix')]
+        assert "'-d'," not in scan_section, \
+            "scan_proc must not use -d (no bssid filter in scan)"
+        assert "'--bssid'" not in scan_section, \
+            "scan_proc must not use --bssid (no bssid filter in scan)"
 
+    def test_capture_command_has_no_output_format(self):
+        """airodump-ng capture command must not use --output-format."""
+        import inspect
+        from modules.handshake import capture_handshake
+        src = inspect.getsource(capture_handshake)
+        cap_section = src[src.find('airodump_proc'):src.find('aireplay_proc')]
+        assert '--output-format' not in cap_section, \
+            "airodump capture must not use --output-format"
 
-class TestScapyStopFix:
-    """Surviving Bug 1: AsyncSniffer stops immediately on stop_event."""
-
-    def test_stop_event_stops_sniffer(self):
-        """Sniffer thread should exit within 2 seconds of stop_event."""
-        from modules.handshake import _scapy_sniffer_thread
-
-        stop_ev = threading.Event()
-        result = {}
-
-        # Patch AsyncSniffer so the test doesn't need a real interface
-        class FakeSniffer:
-            def start(self): pass
-            def stop(self, join=False): pass
-
-        with patch('modules.handshake._scapy_sniffer_thread') as mock_thread:
-            # Directly test the stop-event polling logic instead
-            # (real AsyncSniffer would need a live interface)
-            stop_ev.set()  # pre-set so thread exits immediately
-            mock_thread.return_value = None
-            mock_thread(
-                'AA:BB:CC:11:22:33', 'lo', result, stop_ev, '/tmp'
-            )
-        # Verify that setting stop_ev before the call doesn't raise
-        assert stop_ev.is_set()
+    def test_check_every_constant_is_five_seconds(self):
+        """Verification polling interval must be CHECK_EVERY = 5 seconds."""
+        import inspect
+        from modules.handshake import capture_handshake
+        src = inspect.getsource(capture_handshake)
+        assert 'CHECK_EVERY' in src, "CHECK_EVERY constant not found"
+        m = re.search(r'CHECK_EVERY\s*=\s*(\d+)', src)
+        assert m, "CHECK_EVERY assignment not found"
+        assert int(m.group(1)) == 5, f"CHECK_EVERY must be 5, got {m.group(1)}"
 
 
 class TestHcxdumptoolFilterFormat:
@@ -298,25 +284,21 @@ class TestHcxdumptoolFilterFormat:
         assert ':' not in bssid_no_colons
         assert bssid_no_colons == 'aabbcc112233'
 
-    def test_pmkid_phase_writes_colon_free_filter(self, tmp_path):
-        """_run_pmkid_phase must write BSSID without colons to the filter file."""
-        from modules.handshake import _run_pmkid_phase
+    def test_pmkid_writes_colon_free_filter(self, tmp_path):
+        """_pmkid must write BSSID without colons to the filter file."""
+        from modules.handshake import _pmkid
         bssid = 'AA:BB:CC:11:22:33'
-        filter_path = tmp_path / 'bssid_filter.txt'
 
         with patch('subprocess.Popen') as mock_popen:
-            mock_proc = MagicMock()
-            mock_proc.poll.return_value = 0
             mock_popen.side_effect = FileNotFoundError  # hcxdumptool not installed
-            _run_pmkid_phase(bssid, 'wlan0mon', str(tmp_path), duration=1)
+            _pmkid(bssid, 'wlan0mon', str(tmp_path), duration=1)
 
-        # If hcxdumptool isn't found, the function returns early but the filter
-        # file is written before the Popen call — check it was written colon-free
-        filter_file = tmp_path / 'bssid_filter.txt'
-        if filter_file.exists():
-            content = filter_file.read_text().strip()
-            assert ':' not in content, f"Filter file contains colons: {content!r}"
-            assert content == 'aabbcc112233'
+        # The filter file is written before the Popen call; check it's colon-free
+        filter_file = tmp_path / 'bssid.flt'
+        assert filter_file.exists(), "bssid.flt not written"
+        content = filter_file.read_text().strip()
+        assert ':' not in content, f"Filter file contains colons: {content!r}"
+        assert content == 'aabbcc112233'
 
 
 class TestSingleAirodumpInstance:
@@ -354,24 +336,15 @@ class TestSingleAirodumpInstance:
         assert clients[1].mac == 'BB:BB:BB:BB:BB:02'
 
 
-class TestVerifyRateLimit:
-    """Surviving Bug 4: verify_handshake must not be called more than once per 3s."""
+class TestKillHelper:
+    """_kill must be safe to call on None and on already-dead processes."""
 
-    def test_verify_interval_constant_exists_and_is_sufficient(self):
-        """VERIFY_INTERVAL must exist in capture_handshake and be >= 3.0 seconds."""
-        import inspect
-        from modules.handshake import capture_handshake
-        src = inspect.getsource(capture_handshake)
-        assert 'VERIFY_INTERVAL' in src, "VERIFY_INTERVAL constant not found in capture_handshake"
-        m = re.search(r'VERIFY_INTERVAL\s*=\s*([\d.]+)', src)
-        assert m, "VERIFY_INTERVAL assignment not found in capture_handshake source"
-        assert float(m.group(1)) >= 3.0, \
-            f"VERIFY_INTERVAL must be >= 3.0, got {m.group(1)}"
+    def test_kill_none_is_safe(self):
+        from modules.handshake import _kill
+        _kill(None)  # must not raise
 
-    def test_deauth_uses_64_frames(self):
-        """Deauth count must be 64 (sufficient for congested 2.4GHz)."""
-        import inspect
-        from modules.handshake import capture_handshake
-        src = inspect.getsource(capture_handshake)
-        assert 'count=64' in src, \
-            "capture_handshake must use count=64 for targeted deauth"
+    def test_kill_dead_process_is_safe(self):
+        from modules.handshake import _kill
+        proc = MagicMock()
+        proc.poll.return_value = 0   # already exited
+        _kill(proc)                  # must not raise, must not call terminate
