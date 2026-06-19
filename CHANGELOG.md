@@ -7,7 +7,7 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [0.8.0] — 2026-06-19
 
-### Fixed — 6 surviving bugs in the post-v0.7.0 handshake pipeline
+### Fixed — 7 surviving bugs in the post-v0.7.0 handshake pipeline
 
 **Surviving Bug 1 — `AsyncSniffer` blocks on `.stop()` — sniffer thread never exits cleanly**
 - `modules/handshake.py` (`_scapy_sniffer_thread`): switched from `sniff()` with `stop_filter`
@@ -42,6 +42,10 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   frames per client (was 8–10) and the wait window after each burst is 12 seconds
   (4 × 3 s sleeps). Modern APs and congested 2.4 GHz environments drop most deauth
   frames; 64 frames with -x 1000 ensures enough survive to force a reassociation.
+
+**Surviving Bug 6 — early exit from reassoc window**
+- `modules/handshake.py` (`capture_handshake`): The old inner loop had a `break` after the first "not yet" check, meaning the 5-second window effectively collapsed to 1 second of actual listening. The client reconnects in 1-3 seconds but the handshake exchange itself takes another second or two — we were bailing before it completed.
+- `REASSOC_WAIT` increased from 5s to 30s. The full sequence after deauth is: client notices disconnect (~0.5s) → client scans/probes → AP responds → 4-way handshake exchange. On a real network with retries and congestion this easily takes 5-15 seconds, so 5s was far too tight. 30 seconds gives the whole cycle room to breathe. Cycle at 10 packets, 30s window. If the client doesn't reconnect in that window, the next burst fires immediately and the cycle repeats.
 
 **Architectural fix — two separate airodump-ng instances caused a capture gap**
 - `modules/handshake.py` (`capture_handshake`): **one** airodump-ng instance now

