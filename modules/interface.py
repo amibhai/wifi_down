@@ -125,12 +125,37 @@ def verify_monitor_mode(interface: str) -> bool:
         return False
 
 
+def _interface_matches(monitor_iface: str, requested: str) -> bool:
+    """Check if a monitor interface corresponds to the requested base interface.
+
+    Examples:
+        wlan0mon  matches  wlan0
+        wlan0     matches  wlan0
+        wlan1mon  does NOT match  wlan0
+    """
+    # Direct match
+    if monitor_iface == requested:
+        return True
+    # Common naming: wlan0 → wlan0mon
+    if monitor_iface == requested + "mon":
+        return True
+    # Reverse: strip 'mon' suffix
+    if monitor_iface.endswith("mon") and monitor_iface[:-3] == requested:
+        return True
+    return False
+
+
 def enable_monitor_mode(interface: str) -> str:
     """
     Enable monitor mode on *interface*.
 
     Returns the new monitor interface name (e.g. wlan0mon) on success.
     Raises RuntimeError with full diagnostic output on failure.
+
+    Unlike the previous implementation, this now validates that any
+    existing monitor interface actually corresponds to the requested
+    base interface — prevents returning wlan1mon when the user asked
+    for wlan0.
     """
     if os.geteuid() != 0:
         raise RuntimeError(
@@ -139,12 +164,20 @@ def enable_monitor_mode(interface: str) -> str:
 
     console.print(f"\n[cyan]◈ Enabling monitor mode on [bold]{interface}[/bold]...[/]")
 
+    # Check if the requested interface already has a matching monitor
     existing = get_monitor_interfaces()
+    for mon_iface in existing:
+        if _interface_matches(mon_iface, interface):
+            console.print(
+                f"[dim green]◈ Monitor interface already active: [bold]{mon_iface}[/bold][/]"
+            )
+            return mon_iface
+
+    # If other monitor interfaces exist but don't match, warn
     if existing:
         console.print(
-            f"[dim green]◈ Monitor interface already active: [bold]{existing[0]}[/bold][/]"
+            f"[dim yellow]◈ Monitor interfaces {existing} exist but don't match {interface}[/]"
         )
-        return existing[0]
 
     kill_interfering_processes()
 
@@ -158,10 +191,13 @@ def enable_monitor_mode(interface: str) -> str:
     new_iface = parse_new_interface_from_output(combined, interface)
 
     if not new_iface:
+        # Re-check monitor interfaces — find the one matching our request
         monitor_ifaces = get_monitor_interfaces()
-        if monitor_ifaces:
-            new_iface = monitor_ifaces[0]
-        elif verify_monitor_mode(interface):
+        for mon_iface in monitor_ifaces:
+            if _interface_matches(mon_iface, interface):
+                new_iface = mon_iface
+                break
+        if not new_iface and verify_monitor_mode(interface):
             new_iface = interface
 
     if not new_iface:
@@ -196,3 +232,44 @@ def disable_monitor_mode(monitor_interface: str) -> bool:
     subprocess.run(["systemctl", "start", "NetworkManager"], capture_output=True, timeout=10)
     console.print("[dim green]  ✓ Interface restored[/]")
     return result.returncode == 0
+
+
+def verify_channel(interface: str, expected_channel: int) -> bool:
+    """Verify the interface is on the expected channel via iw dev info."""
+    try:
+        result = subprocess.run(
+            ["iw", "dev", interface, "info"],
+            capture_output=True, text=True, timeout=5,
+        )
+        m = re.search(r"channel\s+(\d+)", result.stdout)
+        if m:
+            actual = int(m.group(1))
+            return actual == expected_channel
+    except Exception:
+        pass
+    return False
+
+
+def check_injection_support(interface: str, timeout: int = 10) -> bool:
+    """
+    Check if the interface supports packet injection via aireplay-ng --test.
+
+    Returns True if injection is confirmed, False otherwise.
+    This is what airgeddon checks before attempting deauth.
+    """
+    console.print(f"[dim cyan]◈ Testing injection on {interface}...[/]")
+    try:
+        result = subprocess.run(
+            ["aireplay-ng", "--test", interface],
+            capture_output=True, text=True, timeout=timeout,
+        )
+        combined = result.stdout + result.stderr
+        # aireplay-ng --test outputs "Injection is working!" on success
+        if re.search(r"injection is working", combined, re.IGNORECASE):
+            console.print("[dim green]  ✓ Injection supported[/]")
+            return True
+        console.print("[dim red]  ✗ Injection test failed[/]")
+        return False
+    except (subprocess.TimeoutExpired, FileNotFoundError):
+        console.print("[dim yellow]  ? Injection test inconclusive[/]")
+        return False
