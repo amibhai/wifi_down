@@ -5,6 +5,64 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [0.8.2] — 2026-06-19
+
+### Fixed
+
+- **Capture layer — single airodump-ng process, no contention**
+  All airodump-ng restart sites (startup retry, Phase 2 watchdog, Phase 3 watchdog, reassoc-window
+  watchdog) previously inlined the full `airodump-ng -c … -d … -w … iface` command, each including
+  `-d/--bssid <BSSID>`.  They are now consolidated into a single `_start_airodump_capture()` helper
+  that omits the `-d` flag entirely.  Two benefits: (1) no BSSID filter means EAPOL frames from
+  multi-BSSID APs and band-steering MACs are never silently dropped at the capture layer;
+  (2) there is never more than one airodump-ng process on the interface at a time — the scan phase
+  runs alone, is killed before the capture phase starts, and restart is a single-call operation
+  with no duplicated argument lists.
+
+- **No `-d/--bssid` filter on capture process**
+  Some APs advertise one BSSID in beacons but tag EAPOL frames with a variant MAC (multi-BSSID
+  element, band-steering, hidden-SSID VAP).  The previous `--bssid` filter caused airodump-ng to
+  drop those frames silently.  All BSSID filtering is now deferred to the verification layer
+  (aircrack-ng, tshark, hcxpcapngtool) which handle it correctly.
+
+- **Channel re-locked before every deauth burst**
+  Added `_set_channel()` call at the top of every Phase 2 and Phase 3 burst iteration.  Some
+  adapters (rt2800usb, mt76) reset to their default channel after aireplay-ng finishes injecting.
+  The re-lock + iw readback ensures the interface is on the correct channel before the next burst
+  fires, preventing deauth frames from being sent on the wrong channel.
+
+- **Immediate post-burst verification (catches fast reconnectors)**
+  After every deauth burst (both targeted and broadcast), a verification check runs before the
+  reassociation window timer starts.  Clients that reconnect during the burst itself (common on
+  modern drivers with fast BSS-transition) are caught immediately without waiting the full 30 s.
+
+- **airodump-ng watchdog — restarts capture if process dies mid-session**
+  The reassociation window inner loop (both Phase 2 and Phase 3) now checks `_is_alive(airodump_proc)`
+  every second and calls `_start_airodump_capture()` to restart if the process has exited.
+  Previously a crashed airodump-ng would silently lose all remaining frames for the session.
+
+### Changed
+
+- **Three-engine verification (`_verify`) — all three checks now active**
+  `_verify_aircrack`, `_verify_tshark`, and `_verify_hcxpcapngtool` are each called in sequence;
+  the first to succeed returns `True`.
+
+  - `_verify_aircrack`: `-q` flag intentionally absent — several aircrack-ng builds suppress the
+    `WPA (N handshake)` summary line when `-q` is present, causing false negatives.
+  - `_verify_tshark`: counts `eapol.type == 3` frames for the BSSID; ≥ 2 = M1+M2 present.
+  - `_verify_hcxpcapngtool` / `hcxpcaptool`: converts cap → `.hc22000` and searches for the target
+    BSSID — same tool and format hashcat uses internally, so this is a definitive crackability check.
+
+- **`_start_airodump_capture()` helper extracted**
+  All six previous inline airodump-ng restart calls replaced with a single named helper.  The helper
+  is documented with the rationale for omitting `--bssid` so the design decision is preserved in code.
+
+- **Last-chance cap save on timeout**
+  If all phases expire without a verified handshake, the cap file is saved anyway if it exceeds
+  10 KB, with manual verification instructions printed (`aircrack-ng`, `hcxpcapngtool`).
+
+---
+
 ## [0.8.1] — 2026-06-19
 
 ### Fixed
