@@ -228,26 +228,28 @@ def action_scan() -> None:
 
 
 def action_capture() -> None:
-    if not state["monitor_interface"]:
-        error(t("error.no_interface"))
+    if not state.get('monitor_interface'):
+        error("Set interface first [Option 1].")
         return
-    if not state["target"]:
-        error(t("error.no_target"))
+    if not state.get('target'):
+        error("Scan and select target first [Option 2].")
         return
+
+    target = state['target']
     _sm.transition(Stage.CAPTURING)
     cap = capture_handshake(
-        bssid=state["target"]["bssid"],
-        ssid=state["target"]["ssid"],
-        channel=int(state["target"]["channel"]),
-        monitor_interface=state["monitor_interface"],
-        timeout=180,
+        bssid             = target['bssid'],
+        ssid              = target.get('ssid', ''),
+        channel           = int(target['channel']),
+        monitor_interface = state['monitor_interface'],
+        timeout           = 180,
     )
     if cap:
-        state["capture_file"] = cap
+        state['capture_file'] = cap
         _sm.transition(Stage.CAPTURING, capture_file=cap, handshake_file=cap)
-        success(f"Saved: {cap}")
+        success(f"Capture saved: {cap}")
     else:
-        error("No handshake captured.")
+        warn("No handshake captured.")
 
 
 def action_wordlist() -> None:
