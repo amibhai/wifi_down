@@ -781,3 +781,4 @@ sudo wifi-auditor --preflight  →  always fresh check, never writes sentinel
 - `modules/cracker.py` — `aircrack-ng` / hashcat wrapper.
 - `install.sh` — Debian/Ubuntu dependency installer.
 - `README.md` — full project documentation.
+
