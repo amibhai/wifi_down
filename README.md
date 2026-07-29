@@ -1060,3 +1060,4 @@ mypy modules/ wifi_auditor/
 ## License
 
 MIT — for authorized security testing only. See `LICENSE` for full terms.
+
