@@ -46,8 +46,16 @@ def _detect_system_lang() -> str:
     if env_lang:
         return env_lang[:2].lower()
 
+    # Parse standard locale env vars directly (getdefaultlocale is deprecated
+    # and removed in Python 3.15). This mirrors what it used to do.
     try:
-        lang_code, _ = locale.getdefaultlocale()
+        for var in ("LC_ALL", "LC_MESSAGES", "LANG", "LANGUAGE"):
+            val = os.environ.get(var, "")
+            if val:
+                code = val.split(":")[0].split(".")[0].split("_")[0]
+                if code and code.upper() not in ("C", "POSIX"):
+                    return code[:2].lower()
+        lang_code, _ = locale.getlocale()
         if lang_code:
             return lang_code[:2].lower()
     except Exception:

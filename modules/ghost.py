@@ -19,7 +19,7 @@ import re
 import sqlite3
 import time
 from dataclasses import dataclass, field
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Optional
 
@@ -371,7 +371,7 @@ async def _run_ghost_async(
         shodan_ports=s_ports,
         shodan_vulns=s_vulns,
         public_ip=public_ip,
-        queried_at=datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ"),
+        queried_at=datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
     )
 
 
@@ -383,8 +383,15 @@ def run_ghost_tracker(
 ) -> GhostReport:
     """Synchronous wrapper around the async ghost runner."""
     try:
-        loop = asyncio.get_event_loop()
-        if loop.is_running():
+        try:
+            asyncio.get_running_loop()
+            inside_loop = True
+        except RuntimeError:
+            inside_loop = False
+
+        if inside_loop:
+            # Called from within a running event loop — offload to a thread
+            # so we can spin up an independent loop via asyncio.run().
             import concurrent.futures
             with concurrent.futures.ThreadPoolExecutor(max_workers=1) as ex:
                 fut = ex.submit(
@@ -392,10 +399,9 @@ def run_ghost_tracker(
                     _run_ghost_async(bssid, vendor, model, public_ip),
                 )
                 return fut.result(timeout=30)
-        else:
-            return loop.run_until_complete(
-                _run_ghost_async(bssid, vendor, model, public_ip)
-            )
+        return asyncio.run(
+            _run_ghost_async(bssid, vendor, model, public_ip)
+        )
     except Exception as exc:
         logger.warning("ghost tracker failed: %s", exc)
         return GhostReport(bssid=bssid, vendor=vendor, model=model)
