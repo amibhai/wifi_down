@@ -303,13 +303,17 @@ def _run_continuous(
     interface, bssid, clients, burst_count, procs, stats, lock, reader, limiter
 ) -> None:
     info(f"Continuous deauth — Ctrl+C to stop. Rate limit: {limiter._max_bursts} bursts/min")
+    # Each round sends a *finite* burst that aireplay-ng completes and exits.
+    # Using --deauth 0 (infinite) here would spawn a new never-ending process
+    # every round, leaking PIDs and flooding the air uncontrollably.
+    per_round = burst_count if burst_count and burst_count > 0 else BURST_DEFAULT
     try:
         while True:
             for mac in clients:
                 limiter.wait_for_burst(bssid)
                 if not limiter.record_frame():
                     time.sleep(0.1)
-                cmd = _build_cmd(interface, bssid, mac, 0)
+                cmd = _build_cmd(interface, bssid, mac, per_round)
                 p = subprocess.Popen(
                     cmd, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True
                 )
@@ -317,6 +321,9 @@ def _run_continuous(
                 t = threading.Thread(target=reader, args=(p, mac), daemon=True)
                 t.start()
                 _draw_stats(stats, bssid, ssid=bssid, limiter=limiter)
+            # Reap finished bursts so the process list stays bounded.
+            for p in [p for p in procs if p.poll() is not None]:
+                procs.remove(p)
             time.sleep(BURST_INTERVAL)
     except KeyboardInterrupt:
         warn("Attack stopped by user.")

@@ -39,7 +39,10 @@ class AttackSequencer:
         bssid: str    = ap_info.get("bssid", "")
         ssid: str     = ap_info.get("ssid", ap_info.get("essid", ""))
         privacy: str  = ap_info.get("privacy", "WPA2").upper()
-        signal: int   = int(ap_info.get("power", "-70").lstrip() or -70)
+        try:
+            signal: int = int(str(ap_info.get("power", -70)).strip() or -70)
+        except (ValueError, TypeError):
+            signal = -70
         clients: int  = int(ap_info.get("client_count", 0) or 0)
         has_pmkid: bool  = bool(ap_info.get("pmkid_capable", False))
         wps_enabled: bool = bool(ap_info.get("wps_enabled", False))

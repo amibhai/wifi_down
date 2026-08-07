@@ -37,10 +37,16 @@ _RULE_SEARCH_PATHS = [
 def cracker_menu(capture_file: str, wordlist_file: str, ssid: str = "") -> None:
     print_section("Handshake Cracker")
 
-    # ── PMKID path ────────────────────────────────────────────────────────────
+    # ── PMKID / pre-converted hashcat hash path ───────────────────────────────
+    # The handshake engine's Phase-4 PMKID fallback saves a ready-to-crack
+    # hashcat 22000/16800 file. aircrack-ng can't read those, so route any
+    # hash file straight to the hashcat-based PMKID cracker.
     if capture_file.endswith(":pmkid"):
         hash_file = capture_file.replace(":pmkid", "")
         _crack_pmkid_menu(hash_file, wordlist_file)
+        return
+    if capture_file.endswith((".hc22000", ".16800", ".22000")):
+        _crack_pmkid_menu(capture_file, wordlist_file)
         return
 
     # ── WPA handshake path ────────────────────────────────────────────────────
@@ -293,12 +299,18 @@ def _run_hashcat(hash_file: str, wordlist_file: str, rules: str | None = None) -
     info(f"  {C.DIM}Press Ctrl+C to abort.{C.RESET}")
     print()
 
+    # We disable the potfile (so re-runs always attempt the crack) which means
+    # hashcat won't record the result there — write cracked plaintext to an
+    # explicit outfile and read it back. --outfile-format 2 = plaintext only.
+    outfile = os.path.join(RESULTS_DIR, f"hashcat_cracked_{int(time.time())}.txt")
     cmd = [
         "hashcat",
         "-m", "22000",
         hash_file,
         wordlist_file,
         "--potfile-disable",
+        "--outfile", outfile,
+        "--outfile-format", "2",
         "-O",               # optimised kernels
         "--status",
         "--status-timer=10",
@@ -325,7 +337,7 @@ def _run_hashcat(hash_file: str, wordlist_file: str, rules: str | None = None) -
         return
 
     elapsed = time.time() - start
-    key = _hashcat_result(hash_file)
+    key = _hashcat_result(outfile)
     print()
     if key:
         found(f"KEY FOUND!  →  {key}")
@@ -346,17 +358,17 @@ def _print_hashcat_line(line: str) -> None:
         print(f"  {C.DIM}{line}{C.RESET}")
 
 
-def _hashcat_result(hash_file: str) -> str | None:
-    for potfile in (
-        os.path.expanduser("~/.local/share/hashcat/hashcat.potfile"),
-        "hashcat.potfile",
-    ):
-        if os.path.exists(potfile):
-            with open(potfile) as f:
+def _hashcat_result(outfile: str) -> str | None:
+    """Read the recovered password from hashcat's --outfile (format 2 = plain)."""
+    try:
+        if os.path.exists(outfile) and os.path.getsize(outfile) > 0:
+            with open(outfile, errors="replace") as f:
                 for line in f:
-                    line = line.strip()
-                    if ":" in line:
-                        return line.split(":", 1)[-1]
+                    line = line.rstrip("\r\n")
+                    if line:
+                        return line
+    except OSError:
+        pass
     return None
 
 

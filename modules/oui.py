@@ -30,6 +30,16 @@ def _db() -> sqlite3.Connection:
     return conn
 
 
+def _norm_prefix(value: str) -> str:
+    """Canonical OUI key: uppercase hex, no separators, first 6 nibbles.
+
+    IEEE oui.csv stores the Assignment as raw hex ("AABBCC"); BSSIDs arrive
+    colon-separated ("AA:BB:CC:DD:EE:FF"). Both must reduce to the same key
+    or every lookup silently misses.
+    """
+    return value.upper().replace(":", "").replace("-", "").replace(".", "")[:6]
+
+
 def _needs_refresh() -> bool:
     if not OUI_DB_PATH.exists():
         return True
@@ -55,10 +65,10 @@ def refresh_database(force: bool = False) -> bool:
     try:
         reader = csv.DictReader(io.StringIO(resp.text))
         for row in reader:
-            prefix = row.get("Assignment", "").upper().replace("-", ":")
+            prefix = _norm_prefix(row.get("Assignment", ""))
             vendor = row.get("Organization Name", "").strip()
             if prefix and vendor:
-                rows.append((prefix[:8], vendor))
+                rows.append((prefix, vendor))
     except Exception as exc:
         logger.warning("OUI CSV parse error: %s", exc)
         return False
@@ -79,7 +89,7 @@ def get_vendor(bssid: str) -> Optional[str]:
     if _needs_refresh():
         refresh_database()
 
-    prefix = bssid.upper()[:8]   # e.g. "AA:BB:CC"
+    prefix = _norm_prefix(bssid)   # e.g. "AABBCC"
     try:
         conn = _db()
         row = conn.execute(

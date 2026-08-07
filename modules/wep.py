@@ -491,10 +491,12 @@ def _start_airodump_wep(interface, bssid, channel, cap_base) -> subprocess.Popen
         '--write',          cap_base,
         '--output-format',  'cap,csv',
         '--write-interval', '2',
-        '--ivs',            # append-only IV file for faster cracking (also writes .cap)
         interface,
     ]
-    # Note: --ivs creates an .ivs file alongside the .cap; both are valid for aircrack-ng
+    # NOTE: do NOT add --ivs here. --ivs makes airodump write a .ivs file
+    # *instead* of the .cap, but the whole pipeline (_iv_monitor_loop /
+    # _crack_wep_attempt) cracks <base>-01.cap. IV counts come from the CSV's
+    # "# IV" column, so a full .cap gives us both the count and a crackable file.
     return subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 
 
