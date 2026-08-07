@@ -49,7 +49,8 @@ def test_get_version_returns_none_on_exception():
 
 def test_check_tool_missing_tool():
     with patch("shutil.which", return_value=None):
-        status = _check_tool("nonexistent", "nonexistent --version", r"(\d+\.\d+)", required=True)
+        status = _check_tool("nonexistent", "nonexistent --version", r"(\d+\.\d+)",
+                             required=True, category="misc", hint="nonexistent")
     assert not status.ok
     assert status.path is None
     assert status.required is True
@@ -63,7 +64,8 @@ def test_check_tool_found_tool():
             )
             status = _check_tool(
                 "aircrack-ng", "aircrack-ng --version",
-                r"Aircrack-ng\s+(\d+\.\d+)", required=True
+                r"Aircrack-ng\s+(\d+\.\d+)", required=True,
+                category="wireless", hint="aircrack-ng",
             )
     assert status.path == "/usr/bin/aircrack-ng"
     assert status.ok
@@ -77,7 +79,8 @@ def test_check_tool_old_aircrack_fails():
             )
             status = _check_tool(
                 "aircrack-ng", "aircrack-ng --version",
-                r"Aircrack-ng\s+(\d+\.\d+)", required=True
+                r"Aircrack-ng\s+(\d+\.\d+)", required=True,
+                category="wireless", hint="aircrack-ng",
             )
     assert not status.ok
     assert "1.7" in status.note
@@ -121,5 +124,6 @@ def test_run_preflight_exits_on_missing_tool():
 def test_run_preflight_returns_false_no_exit():
     with patch("shutil.which", return_value=None):
         with patch("subprocess.run", side_effect=FileNotFoundError):
-            result = run_preflight(exit_on_failure=False)
-    assert result is False
+            all_pass, statuses = run_preflight(exit_on_failure=False)
+    assert all_pass is False
+    assert isinstance(statuses, list)

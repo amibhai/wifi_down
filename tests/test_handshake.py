@@ -325,15 +325,17 @@ class TestVerifyAircrack:
         assert os.path.exists(wl), "Wordlist should be in tmpdir, not /tmp"
 
     @mock.patch('modules.handshake.subprocess.run')
-    def test_passes_quiet_and_devnull_flags(self, mock_run, tmpdir, cap_file):
-        """Verify aircrack-ng is called with -l /dev/null -q to prevent hangs."""
+    def test_runs_noninteractive_without_quiet(self, mock_run, tmpdir, cap_file):
+        """aircrack-ng must run non-interactively (a -w wordlist makes it exit
+        instead of opening the interactive menu) and must NOT pass -q, which
+        suppresses the 'WPA (N handshake)' summary line the parser depends on."""
         _, path = cap_file
         mock_run.return_value = mock.Mock(stdout="", stderr="")
         _verify_aircrack(path, 'AA:BB:CC:DD:EE:FF', tmpdir)
         call_args = mock_run.call_args[0][0]
-        assert '-l' in call_args
-        assert '/dev/null' in call_args
-        assert '-q' in call_args
+        assert '-w' in call_args                 # wordlist => non-interactive, exits
+        assert '-a' in call_args and '2' in call_args
+        assert '-q' not in call_args             # -q would break handshake detection
 
 
 class TestVerifyTshark:

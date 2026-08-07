@@ -9,7 +9,6 @@ import pytest
 
 from modules.ghost import (
     GhostReport, CVEEntry, _cache_key, _cache_get, _cache_set,
-    _parse_openai_response if False else None,
 )
 
 
