@@ -5,6 +5,76 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [0.8.3] — 2026-08-07
+
+Framework-wide hardening pass. Six real defects across the core attack path
+were found by re-triaging the test suite (which no longer even collected) and
+auditing every module. The suite went from **collection failure → 170 passing**.
+
+### Fixed
+
+- **OUI vendor lookup always returned `None`** (`modules/oui.py`)
+  The IEEE database stored MAC prefixes as raw hex (`AABBCC`) but `get_vendor()`
+  queried with colon-separated form (`AA:BB:CC`), so no lookup ever matched.
+  This silently disabled vendor intelligence everywhere it is consumed — Ghost
+  tracker, vendor-default wordlists (`get_vendor_wordlist`), device
+  fingerprinting, and the Smart Attack Sequencer's vendor scoring. Added a
+  single `_norm_prefix()` canonicaliser applied on both write and read.
+
+- **Smart Attack Sequencer crashed on every real scan** (`modules/sequencer.py`)
+  `score_target()` did `int(ap_info["power"].lstrip())`, assuming `power` was a
+  string; the scanner supplies it as an `int`, raising `AttributeError`. Since
+  `score_target()` runs on every selected target, this broke the sequencer and
+  the Neural Pathfinder rule-based fallback. Now parses int/str/empty/None/garbage
+  safely.
+
+- **Continuous deauth leaked unbounded processes** (`modules/deauth.py`)
+  Continuous mode spawned `aireplay-ng --deauth 0` (infinite) inside a
+  `while True` loop and never reaped them, so a new never-ending injector was
+  launched every round — PID exhaustion and uncontrolled flooding. Continuous
+  mode now sends finite bursts per round and reaps completed processes.
+
+- **Successful hashcat crack reported "Key NOT found"** (`modules/cracker.py`)
+  `_run_hashcat` ran with `--potfile-disable` but `_hashcat_result` recovered
+  the key by reading the (now-disabled) potfile, so it never saw the result — or
+  read a stale one. Switched to an explicit `--outfile --outfile-format 2` and
+  read the recovered plaintext back from it.
+
+- **WEP cracking could never succeed** (`modules/wep.py`)
+  `airodump-ng` was launched with both `--output-format cap,csv` **and** `--ivs`;
+  `--ivs` suppresses the `.cap` that the entire WEP pipeline
+  (`_iv_monitor_loop` → `_crack_wep_attempt`) cracks. Removed `--ivs` — IV counts
+  still come from the CSV `# IV` column, and a full `.cap` is now written.
+
+- **PMKID captures mis-routed at crack time** (`modules/cracker.py`)
+  The handshake engine's Phase-4 PMKID fallback saves a ready-to-crack
+  `.hc22000`, but `cracker_menu` only routed the literal `:pmkid` suffix to the
+  hashcat PMKID path, so real PMKID captures were handed to the aircrack-ng
+  `.cap` path (which can't read them). The router now detects
+  `.hc22000/.22000/.16800` hash files and routes them to hashcat.
+
+- **Test suite could not collect** (`tests/test_ghost.py`)
+  A malformed import (`_parse_openai_response if False else None,`) was a
+  `SyntaxError` that aborted the whole run. Removed.
+
+### Changed
+
+- **Python 3.13/3.14/3.15 forward-compat** — replaced deprecated
+  `locale.getdefaultlocale()` (`modules/i18n.py`), `asyncio.get_event_loop()`
+  (`modules/ghost.py`), and `datetime.utcnow()` (`modules/ghost.py`, now
+  timezone-aware) which are removed/warned in newer interpreters.
+- **Tests realigned to current APIs** — updated the `preflight` tests to the
+  `_check_tool(..., category, hint)` signature and `run_preflight` tuple return,
+  and the handshake verify test to assert the deliberate no-`-q` design.
+
+### Added
+
+- **`tests/test_fixes.py`** — 13 hermetic regression tests pinning each fix
+  above (hashcat outfile recovery, PMKID routing, finite continuous deauth,
+  WEP `--ivs` absence, sequencer power-type tolerance).
+
+---
+
 ## [0.8.2] — 2026-06-19
 
 ### Fixed

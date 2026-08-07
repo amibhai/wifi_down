@@ -328,6 +328,31 @@ pytest tests/test_handshake.py -v
 
 ---
 
+## Framework Hardening (v0.8.3)
+
+A framework-wide audit fixed six real defects across the core attack path that
+silently broke features outside the handshake engine. Full detail lives in
+[`CHANGELOG.md`](CHANGELOG.md); summary:
+
+| Module | Defect | Impact | Fix |
+|---|---|---|---|
+| `oui.py` | Prefixes stored as `AABBCC`, queried as `AA:BB:CC` | `get_vendor()` **always** `None` → dead vendor intel in Ghost, wordlists, sequencer | `_norm_prefix()` on read + write |
+| `sequencer.py` | `power.lstrip()` on an `int` | `AttributeError` on every scanned target | Parse any int/str/None safely |
+| `deauth.py` | Continuous mode spawned `--deauth 0` forever | PID exhaustion + uncontrolled flooding | Finite bursts + process reaping |
+| `cracker.py` | `--potfile-disable` but key read from potfile | hashcat crack reported "not found" | Explicit `--outfile` recovery |
+| `cracker.py` | PMKID `.hc22000` sent to aircrack `.cap` path | PMKID captures uncrackable | Route hash files to hashcat |
+| `wep.py` | `--ivs` suppressed the `.cap` being cracked | WEP crack could never succeed | Drop `--ivs`; count IVs from CSV |
+
+Also: Python 3.13–3.15 forward-compat (removed deprecated `locale`/`asyncio`/
+`datetime` calls) and `tests/test_fixes.py` (13 regression tests). Full suite:
+**170 passing**.
+
+```bash
+pytest -q          # 170 passed
+```
+
+---
+
 ## WPS Attack Module
 
 WiFi Auditor includes a full WPS attack suite in `modules/wps.py`.
