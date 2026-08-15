@@ -5,6 +5,63 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [0.9.0] — 2026-08-07
+
+**Handshake capture & active-client detection re-engineered** — event-driven,
+band-aware, and far more reliable. Root cause of the field failures was
+architectural, not cosmetic: the old engine took a one-shot 15 s passive client
+scan (missing idle stations) and "detected" handshakes by shelling out to
+`aircrack-ng` against the growing `.cap` **every second** (CPU/IO thrash that
+starved the very airodump-ng recording the frames), with a 30 s dead reassoc
+window that wasted the budget.
+
+### Added
+
+- **`modules/eapol_monitor.py` — real-time scapy EAPOL/PMKID detector.**
+  A `LiveMonitor` (scapy `AsyncSniffer`) classifies 4-way messages M1–M4 the
+  instant they hit the air and learns active clients continuously from data
+  frames. Pure, unit-tested helpers: `classify_eapol`, `is_crackable`
+  (M1+M2 / M2+M3 with replay-counter consistency), `pmkid_from_m1` (RSN PMKID
+  KDE), `client_from_data_frame` (ToDS/FromDS direction + I/G-bit filtering).
+  Shared `discover_clients()` unifies the sniffer with the airodump station
+  table. Degrades gracefully to periodic verification if scapy is unavailable.
+- **`tests/test_eapol_monitor.py`** — 25 pure-logic unit tests (no RF).
+- **WPA3-SAE awareness** — SAE-only targets are detected and skipped (no
+  dictionary-crackable 4-way), instead of burning the capture budget.
+
+### Changed
+
+- **`modules/handshake.py` — event-driven orchestrator.** One long-lived
+  airodump-ng (writes `.cap` + `.csv`, `--write-interval 1`, no `--bssid`
+  filter) runs alongside the `LiveMonitor`. Flow: warm-up discovery + a
+  broadcast "flush" to reveal idle clients → rolling loop of small targeted
+  deauth bursts to the strongest clients with realistic **6 s** reconnect
+  windows (a deauthed client reconnects in 1–5 s), broadcast sweep every 3rd
+  round → clientless PMKID sweep → last-chance save. The live monitor is the
+  instant trigger; the on-disk `aircrack-ng/tshark/hcxpcapngtool` verify remains
+  the **authoritative** success gate (no false positives). Tunables are named
+  constants (`DEFAULT_TIMEOUT=120`, `WARMUP_S=5`, `LISTEN_WINDOW_S=6`,
+  `VERIFY_INTERVAL=5`, `BROADCAST_EVERY=3`, `TOP_K_CLIENTS=5`).
+- **Band-aware channel locking** — `_set_channel` now handles 2.4 **and** 5 GHz
+  (`iw set channel` + `set freq` fallback with readback verification); the new
+  `_channel_to_freq` maps channel → MHz. The retry/verify contract is preserved.
+- **`modules/deauth.py`** — `_scan_clients` now uses the shared
+  `discover_clients()` instead of the one-shot 15 s CSV snapshot, so the
+  standalone deauth menu gets the same reliable active-client detection.
+- **`wifi_auditor/cli.py`** — the three `capture_handshake()` call sites pass the
+  target's `security_tier` so WPA3-SAE is skipped early.
+- Public API unchanged: `capture_handshake(...)` / `verify_handshake(...)` and
+  every helper the test suite imports are preserved.
+
+### Verification
+
+- Full suite **200 passing** (`py -3.12 -m pytest -q`).
+- Live-RF acceptance checklist (2.4 + 5 GHz, active-client + clientless) in the
+  README's Handshake Capture Engine section — the real proof is `aircrack-ng`/
+  `hashcat -m 22000` recovering a known PSK from a saved capture.
+
+---
+
 ## [0.8.3] — 2026-08-07
 
 Framework-wide hardening pass. Six real defects across the core attack path

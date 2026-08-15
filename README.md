@@ -271,10 +271,56 @@ Package mapping examples (TOOL_PACKAGES):
 
 ## Handshake Capture Engine
 
-`modules/handshake.py` (v0.8.0 — single-instance architecture)
-implements a bulletproof 3-stage WPA2 handshake capture pipeline.
-`modules/client_scanner.py` has been **deleted** — all its functionality
-is now embedded directly in `handshake.py`.
+`modules/handshake.py` (**v0.9.0 — event-driven architecture**) captures a
+crackable WPA/WPA2 4-way handshake (or PMKID) on 2.4 **and** 5 GHz, and exits
+the instant one is confirmed.
+
+### Why v0.9.0 (what was actually failing)
+
+The previous engine failed in the field for architectural reasons:
+
+- **Client detection was a one-shot 15 s passive scan** — idle stations (which
+  transmit sparsely) were never seen, and nothing re-discovered clients that
+  appeared during capture.
+- **Handshakes were "detected" by running `aircrack-ng` on the growing `.cap`
+  every second** — a 20 s-timeout subprocess spawned each second, thrashing CPU
+  and I/O and starving the airodump-ng recording the frames.
+- **A 30 s dead reassoc window** wasted the budget (a deauthed client reconnects
+  in 1–5 s), leaving only ~3 deauth attempts in 180 s.
+
+### v0.9.0 architecture
+
+- **`modules/eapol_monitor.py` — real-time scapy detector.** A `LiveMonitor`
+  (`AsyncSniffer`) classifies EAPOL M1–M4 the moment they hit the air and learns
+  active clients continuously from data frames (ToDS/FromDS direction). It also
+  extracts RSN **PMKID** from M1. This is the instant, zero-cost trigger that
+  replaces per-second `aircrack-ng` polling.
+- **One long-lived airodump-ng** writes `.cap` + `.csv` (no `--bssid` filter, so
+  multi-BSSID / band-steering EAPOL is never dropped). The sniffer and airodump
+  read the same monitor interface passively — independent sockets, no contention.
+- **"Flush then target" deauth:** an early broadcast flush reveals idle clients,
+  then small targeted bursts to the strongest clients with realistic **6 s**
+  reconnect windows; a broadcast sweep every 3rd round; a clientless **PMKID
+  sweep** if no station is ever seen.
+- **Authoritative confirmation:** the live monitor decides *when* to verify; the
+  on-disk `aircrack-ng / tshark / hcxpcapngtool` check is the success gate, so a
+  parser quirk can never produce a false positive.
+- **Band-aware channel lock** (2.4 + 5 GHz) with `iw set channel`/`set freq`
+  readback, and **WPA3-SAE** targets are skipped (no dictionary-crackable 4-way).
+- Tunables are named constants: `DEFAULT_TIMEOUT=120`, `WARMUP_S=5`,
+  `LISTEN_WINDOW_S=6`, `VERIFY_INTERVAL=5`, `BROADCAST_EVERY=3`, `TOP_K_CLIENTS=5`.
+
+### Live-RF validation checklist (run before relying on it)
+
+1. `sudo wifi-auditor --preflight` → required tools green + injection OK.
+2. **2.4 GHz, active client:** put a known phone on your test AP → scan → select
+   → capture. Expect the client listed within ~5 s and a handshake within
+   ~15–30 s, with SHA-256 + auto `.hc22000` printed.
+3. **Prove it's real:** `aircrack-ng -w <wordlist-with-known-PSK> <saved.cap>`
+   (or `hashcat -m 22000 <saved.hc22000> <wordlist>`) actually recovers the key.
+4. **5 GHz:** repeat on ch 36/149 → confirm channel-lock readback + capture.
+5. **Clientless:** disconnect all clients → expect a PMKID hash or a clean,
+   diagnostic timeout (no crash, no hang, monitor mode restored on Ctrl+C).
 
 ### 11 confirmed bugs fixed in v0.7.0
 
