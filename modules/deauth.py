@@ -160,29 +160,23 @@ def deauth_menu(
 ###############################################################################
 
 def _scan_clients(interface: str, bssid: str, channel: int, duration: int) -> list[dict]:
-    tmp_dir  = tempfile.mkdtemp(prefix="wifiaudit_deauth_")
-    out_base = os.path.join(tmp_dir, "clients")
+    """Discover active clients using the shared real-time monitor + CSV union.
 
-    proc = subprocess.Popen(
-        ["airodump-ng", "--bssid", bssid, "--channel", str(channel),
-         "--write", out_base, "--output-format", "csv", "--write-interval", "2",
-         interface],
-        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-    )
+    This replaces the old one-shot 15s airodump CSV snapshot (which missed idle
+    stations) with the same continuous dual-source discovery the handshake engine
+    uses — a scapy LiveMonitor learning stations from live data frames, unioned
+    with the airodump station table.
+    """
+    from modules.eapol_monitor import discover_clients
 
-    csv_path = out_base + "-01.csv"
+    info(f"Discovering active clients on {bssid} for {duration}s...")
     try:
-        for remaining in range(duration, 0, -1):
-            time.sleep(1)
-            clients = _parse_clients_csv(csv_path, bssid)
-            _print_client_table(clients, f"Scanning... {remaining}s ({len(clients)} client(s))")
+        clients = discover_clients(interface, bssid, channel, duration=duration)
     except KeyboardInterrupt:
         warn("Client scan interrupted.")
-    finally:
-        proc.terminate()
-        proc.wait()
-
-    return _parse_clients_csv(csv_path, bssid)
+        clients = []
+    _print_client_table(clients, f"{len(clients)} active client(s) found")
+    return clients
 
 
 def _parse_clients_csv(csv_path: str, bssid: str) -> list[dict]:

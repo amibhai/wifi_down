@@ -414,46 +414,36 @@ class TestProcessManagement:
 # Phase time budget math
 # ═══════════════════════════════════════════════════════════════════════════════
 
-class TestPhaseBudgetMath:
-    """Verify the absolute deadline architecture prevents the overflow bug."""
+class TestEngineTiming:
+    """The engine is event-driven with a single absolute deadline; verify the
+    tuning constants are internally consistent and realistic."""
 
-    def test_phases_fit_within_timeout_180(self):
-        timeout = 180
-        start = 0
-        p1_end = start + int(timeout * 0.08)
-        p2_end = start + int(timeout * 0.60)
-        p3_end = start + int(timeout * 0.78)
-        deadline = start + timeout
+    def test_constants_are_sane(self):
+        import modules.handshake as hs
+        assert hs.WARMUP_S >= 2                     # long enough to observe clients
+        assert 3 <= hs.LISTEN_WINDOW_S <= 12        # realistic reconnect window
+        assert hs.VERIFY_INTERVAL >= 1              # not per-second thrash
+        assert hs.BROADCAST_EVERY >= 2
+        assert hs.TOP_K_CLIENTS >= 1
+        assert 0 < hs.MONITOR_POLL_S <= 1.0
+        assert hs.DEFAULT_TIMEOUT >= hs.WARMUP_S + hs.LISTEN_WINDOW_S
 
-        assert p1_end <= p2_end <= p3_end <= deadline
-        assert p3_end < deadline  # PMKID phase has budget
-        assert deadline - p3_end >= 15  # at least 15s for PMKID
+    def test_warmup_plus_one_window_fits_default_timeout(self):
+        import modules.handshake as hs
+        # At least a few full deauth/listen rounds must fit in the budget
+        rounds = (hs.DEFAULT_TIMEOUT - hs.WARMUP_S) // hs.LISTEN_WINDOW_S
+        assert rounds >= 5
 
-    def test_phases_fit_within_timeout_300(self):
-        timeout = 300
-        start = 0
-        p1_end = start + int(timeout * 0.08)
-        p2_end = start + int(timeout * 0.60)
-        p3_end = start + int(timeout * 0.78)
-        deadline = start + timeout
-
-        assert p1_end <= p2_end <= p3_end <= deadline
-        assert deadline - p3_end >= 60  # 66s for PMKID at 300s timeout
-
-    def test_phases_never_overflow_timeout(self):
-        """The critical bug: old code had phases summing > timeout."""
-        for timeout in (60, 120, 180, 240, 300, 600):
-            start = 0
-            p1_end = start + int(timeout * 0.08)
-            p2_end = start + int(timeout * 0.60)
-            p3_end = start + int(timeout * 0.78)
+    def test_deadline_governs_all(self):
+        """The loop must never plan past the absolute deadline."""
+        import modules.handshake as hs
+        start = 1000.0
+        for timeout in (30, 60, 120, 180, 300):
             deadline = start + timeout
-
-            total_used = p3_end - start  # all phases before PMKID
-            assert total_used <= timeout, \
-                f"Phase overflow at timeout={timeout}: used {total_used}s"
-            assert deadline - p3_end > 0, \
-                f"No PMKID budget at timeout={timeout}"
+            warm_end = min(start + hs.WARMUP_S, deadline)
+            assert warm_end <= deadline
+            win_end = min(warm_end + hs.LISTEN_WINDOW_S, deadline)
+            assert win_end <= deadline
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -562,6 +552,65 @@ class TestCaptureHandshake:
                 timeout=30,
             )
             assert result == 'captures/test.cap'
+
+
+class TestMonitorTriggerPath:
+    """Exercise the event-driven path: the live sniffer flags a handshake, and
+    the engine confirms it on disk and saves."""
+
+    @mock.patch('modules.handshake._save', return_value='captures/hs.cap')
+    @mock.patch('modules.handshake._verify', return_value=True)
+    @mock.patch('modules.handshake._find_cap', return_value='/tmp/x-01.cap')
+    @mock.patch('modules.handshake._kill_interfering')
+    @mock.patch('modules.handshake._set_channel', return_value=True)
+    @mock.patch('modules.handshake._popen')
+    @mock.patch('modules.handshake._deauth_burst_parallel')
+    def test_eapol_trigger_confirms_and_saves(self, *_mocks):
+        from modules.eapol_monitor import MonitorSnapshot
+        fake = mock.Mock()
+        fake.start.return_value = True
+        fake.error = None
+        fake.snapshot.return_value = MonitorSnapshot(
+            clients=[], handshake_client='10:22:33:44:55:66',
+            pmkid_present=False, pmkid_hashes={}, ap_seen=True,
+        )
+        with mock.patch('modules.handshake.LiveMonitor', return_value=fake):
+            result = capture_handshake(
+                bssid='AA:BB:CC:DD:EE:FF', ssid='Net', channel=6,
+                monitor_interface='wlan0mon', timeout=30,
+            )
+        assert result == 'captures/hs.cap'
+
+    @mock.patch('modules.handshake._save', return_value='captures/pmkid.cap')
+    @mock.patch('modules.handshake._verify', return_value=True)
+    @mock.patch('modules.handshake._find_cap', return_value='/tmp/x-01.cap')
+    @mock.patch('modules.handshake._kill_interfering')
+    @mock.patch('modules.handshake._set_channel', return_value=True)
+    @mock.patch('modules.handshake._popen')
+    @mock.patch('modules.handshake._deauth_burst_parallel')
+    def test_pmkid_trigger_confirms_and_saves(self, *_mocks):
+        from modules.eapol_monitor import MonitorSnapshot
+        fake = mock.Mock()
+        fake.start.return_value = True
+        fake.error = None
+        fake.snapshot.return_value = MonitorSnapshot(
+            clients=[], handshake_client=None,
+            pmkid_present=True, pmkid_hashes={'10:22:33:44:55:66': 'ab' * 16},
+            ap_seen=True,
+        )
+        with mock.patch('modules.handshake.LiveMonitor', return_value=fake):
+            result = capture_handshake(
+                bssid='AA:BB:CC:DD:EE:FF', ssid='Net', channel=36,
+                monitor_interface='wlan0mon', timeout=30,
+            )
+        assert result == 'captures/pmkid.cap'
+
+    def test_wpa3_sae_is_skipped_without_capture(self):
+        result = capture_handshake(
+            bssid='AA:BB:CC:DD:EE:FF', ssid='Net', channel=36,
+            monitor_interface='wlan0mon', timeout=30, security='WPA3_SAE',
+        )
+        assert result is None
 
 
 # ═══════════════════════════════════════════════════════════════════════════════

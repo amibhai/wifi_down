@@ -250,6 +250,7 @@ def action_capture() -> None:
         monitor_interface = state['monitor_interface'],
         timeout           = 180,
         deauth_count      = deauth_count,
+        security          = target.get('security_tier', ''),
     )
     if cap:
         state['capture_file'] = cap
@@ -339,6 +340,7 @@ def action_full_auto() -> None:
         ssid=target["ssid"],
         channel=target["channel"],
         monitor_interface=state["monitor_interface"],
+        security=target.get("security_tier", ""),
     )
     if not cap:
         error("Handshake capture failed.")
@@ -530,6 +532,7 @@ def run_headless(
         ssid=target.get("ssid", target["bssid"]),
         channel=target["channel"],
         monitor_interface=mon,
+        security=target.get("security_tier", ""),
     )
     if not cap:
         logger.error("Handshake capture failed")
