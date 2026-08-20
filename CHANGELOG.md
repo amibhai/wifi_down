@@ -5,6 +5,46 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [2.7.0] — 2026-08-20
+
+**Offline WPA verification crypto + a zero-dependency cracker — Phase 7.** The
+tool now carries the mathematical heart of WPA itself. It can confirm a
+passphrase against a captured PMKID or 4-way handshake in microseconds with no
+external tools, and recover a key from a wordlist even on a box with neither
+hashcat nor aircrack-ng installed.
+
+### Added
+
+- **`modules/wpacrypto.py` — pure-Python WPA/WPA2 verification crypto:**
+  - `pmk()` (PBKDF2-HMAC-SHA1, 4096), `ptk()` (PRF-512), `kck()`,
+    `compute_mic()` (HMAC-SHA1 / HMAC-MD5 / AES-CMAC for key versions 2/1/3),
+    `compute_pmkid()` (HMAC-SHA1(PMK, "PMK Name"|AA|SPA)).
+  - `verify_pmkid()` / `verify_eapol()` — confirm a passphrase against a capture
+    in microseconds (constant-time compare).
+  - `crack_pmkid()` / `crack_eapol()` — pure-Python wordlist crackers.
+  - Correctness anchored on the **published IEEE 802.11i PMK test vectors** plus
+    full derivation round-trips.
+- **`modules/pmkid.py::crack_pmkid_pure()`** — fuses the 22000 parser with the
+  crypto to crack a captured PMKID hash file with **no aircrack-ng / hashcat /
+  cowpatty**; iterates the wordlist once, testing every PMKID with a per-ESSID
+  PMK cache.
+- **`tests/test_wpacrypto.py`** (21 tests, IEEE-vector anchored) and 3 new
+  end-to-end pure-crack tests in `tests/test_pmkid.py` (build a real 22000 line
+  from a known key, recover it) — **+24 tests**.
+
+### Changed
+
+- **`modules/cracker.py`** — the PMKID backend menu gains a **pure-Python**
+  option, and "hashcat not found" now falls back to it (aircrack-ng cannot read
+  the 22000 format at all, so this is the correct tool-free path).
+
+### Verification
+
+- Full suite **397 passing** (`py -3.12 -m pytest -q`) — 373 + 24 new, zero
+  regressions.
+
+---
+
 ## [2.6.0] — 2026-08-20
 
 **Closed-loop auto-cracking — Phase 6.** In 2.5.0 the strategy engine *recommended*

@@ -247,6 +247,59 @@ def already_cracked(hash_file: str) -> dict:
         return {}
 
 
+def crack_pmkid_pure(
+    hash_file: str,
+    wordlist_file: str,
+    progress=None,
+) -> tuple[str, str] | None:
+    """
+    Crack a captured PMKID with **no external tools** — pure Python, using the
+    22000 parser here plus the standards crypto in ``wpacrypto``. Iterates the
+    wordlist once, testing every PMKID in the file per candidate (PMK cached per
+    ESSID). Returns ``(bssid, password)`` on success, else ``None``.
+
+    Slow relative to a GPU (PBKDF2 is deliberately expensive), but it means the
+    tool still recovers a key on a box with neither hashcat nor aircrack-ng.
+    """
+    from modules import wpacrypto
+
+    try:
+        with open(hash_file, "r", errors="replace") as fh:
+            records = [r for r in (parse_hc22000_line(l) for l in fh)
+                       if r and r["type"] == TYPE_PMKID]
+    except OSError:
+        return None
+    if not records:
+        return None
+
+    n = 0
+    try:
+        with open(wordlist_file, "r", errors="replace") as wl:
+            for line in wl:
+                cand = line.rstrip("\r\n")
+                if not (8 <= len(cand) <= 63):
+                    continue
+                n += 1
+                if progress and n % 500 == 0:
+                    progress(n)
+                pmk_cache: dict[str, bytes] = {}
+                for rec in records:
+                    essid = rec["essid"]
+                    if essid not in pmk_cache:
+                        pmk_cache[essid] = wpacrypto.pmk(cand, essid)
+                    got = wpacrypto.compute_pmkid(
+                        pmk_cache[essid], rec["bssid"], rec["station"])
+                    try:
+                        target = bytes.fromhex(rec["key"])
+                    except ValueError:
+                        continue
+                    if got == target:
+                        return rec["bssid"], cand
+    except OSError:
+        return None
+    return None
+
+
 def crack_pmkid_hashcat(
     hash_file: str,
     wordlist: str,

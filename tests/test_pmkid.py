@@ -130,6 +130,39 @@ class TestDescribeSummary:
             "no crackable PMKID/EAPOL hashes"
 
 
+class TestCrackPmkidPure:
+    """End-to-end: build a real 22000 line from a known key, crack it in pure Python."""
+
+    def _hash_file(self, tmp_path, ssid, ap, sta, pw):
+        from modules import wpacrypto
+        pmkid_hex = wpacrypto.compute_pmkid(wpacrypto.pmk(pw, ssid), ap, sta).hex()
+        line = f"WPA*01*{pmkid_hex}*{ap}*{sta}*{ssid.encode().hex()}***"
+        f = tmp_path / "cap.hc22000"
+        f.write_text(line + "\n", encoding="utf-8")
+        return str(f)
+
+    def _wordlist(self, tmp_path, words):
+        f = tmp_path / "wl.txt"
+        f.write_text("\n".join(words) + "\n", encoding="utf-8")
+        return str(f)
+
+    def test_recovers_password(self, tmp_path):
+        hf = self._hash_file(tmp_path, "TestNet", "aabbccddeeff", "112233445566", "letmein123")
+        wl = self._wordlist(tmp_path, ["nope1234", "wrongpass", "letmein123", "later999"])
+        assert pmkid.crack_pmkid_pure(hf, wl) == ("AA:BB:CC:DD:EE:FF", "letmein123")
+
+    def test_miss_returns_none(self, tmp_path):
+        hf = self._hash_file(tmp_path, "TestNet", "aabbccddeeff", "112233445566", "secretpw1")
+        wl = self._wordlist(tmp_path, ["aaaaaaaa", "bbbbbbbb"])
+        assert pmkid.crack_pmkid_pure(hf, wl) is None
+
+    def test_no_pmkid_in_file(self, tmp_path):
+        f = tmp_path / "empty.hc22000"
+        f.write_text("garbage\n", encoding="utf-8")
+        wl = self._wordlist(tmp_path, ["whatever1"])
+        assert pmkid.crack_pmkid_pure(str(f), wl) is None
+
+
 class TestParseHashcatShow:
     def test_maps_bssid_to_password(self):
         out = parse_hashcat_show(f"{PMKID_LINE}:hunter2\n")

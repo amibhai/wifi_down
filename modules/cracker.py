@@ -143,25 +143,26 @@ def _crack_pmkid_menu(hash_file: str, wordlist_file: str) -> None:
   {C.WHITE}PMKID Cracking Backend:{C.RESET}
   {C.GREEN}[1]{C.RESET} hashcat dict  {C.DIM}– GPU-accelerated dictionary (mode 22000){"" if has_hashcat else f"  {C.RED}[not installed]{C.RESET}"}{C.RESET}
   {C.GREEN}[2]{C.RESET} hashcat rules {C.DIM}– dict + rule mutations (best64, d3ad0ne){"" if has_hashcat else f"  {C.RED}[not installed]{C.RESET}"}{C.RESET}
-  {C.GREEN}[3]{C.RESET} aircrack-ng   {C.DIM}– CPU fallback{C.RESET}
+  {C.GREEN}[3]{C.RESET} pure Python   {C.DIM}– no external tools; standards crypto (slower){C.RESET}
 """)
 
     choice = input(f"  {C.YELLOW}Backend [1]: {C.RESET}").strip() or "1"
 
     if choice == "1":
         if not has_hashcat:
-            error("hashcat not found — falling back to aircrack-ng.")
-            _run_aircrack(hash_file, wordlist_file)
+            error("hashcat not found — using the pure-Python cracker instead.")
+            _run_pure_pmkid(hash_file, wordlist_file)
             return
         _run_hashcat(hash_file, wordlist_file, rules=None)
     elif choice == "2":
         if not has_hashcat:
-            error("hashcat not found.")
+            error("hashcat not found — using the pure-Python cracker instead.")
+            _run_pure_pmkid(hash_file, wordlist_file)
             return
         rule = _pick_rule_file()
         _run_hashcat(hash_file, wordlist_file, rules=rule)
     elif choice == "3":
-        _run_aircrack(hash_file, wordlist_file)
+        _run_pure_pmkid(hash_file, wordlist_file)
     else:
         error(f"Unknown option: {choice!r}")
 
@@ -169,6 +170,28 @@ def _crack_pmkid_menu(hash_file: str, wordlist_file: str) -> None:
 ###############################################################################
 # Backend: aircrack-ng
 ###############################################################################
+
+def _run_pure_pmkid(hash_file: str, wordlist_file: str) -> None:
+    """Crack a captured PMKID with zero external tools (standards crypto)."""
+    from modules.pmkid import crack_pmkid_pure
+    info("Pure-Python PMKID crack (no hashcat/aircrack) — this is slower per key...")
+
+    def _progress(n: int) -> None:
+        print(f"\r  {C.DIM}tried {n:,} candidates...{C.RESET}", end="", flush=True)
+
+    try:
+        result = crack_pmkid_pure(hash_file, wordlist_file, progress=_progress)
+    except KeyboardInterrupt:
+        print()
+        warn("Cracking aborted by user.")
+        return
+    print()
+    if result:
+        bssid, password = result
+        found(f"KEY FOUND!  →  {password}   [{bssid}]")
+    else:
+        warn("No password in this wordlist (or no PMKID in the hash file).")
+
 
 def _run_aircrack(capture_file: str, wordlist_file: str) -> None:
     cmd = ["aircrack-ng", "-w", wordlist_file, capture_file]
