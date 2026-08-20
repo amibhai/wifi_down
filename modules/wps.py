@@ -24,6 +24,7 @@ import time
 from datetime import datetime
 from typing import Optional
 
+from modules import radio
 from modules.banner import C, info, success, warn, error, found, print_section
 from modules.exceptions import DependencyError
 
@@ -157,7 +158,7 @@ def detect_wps_capability(
         logger.debug("wash not found — WPS detection skipped")
         return result
 
-    proc = subprocess.Popen(
+    proc = radio.spawn(
         ["wash", "-i", interface, "-c", str(channel), "-C"],
         stdout=subprocess.PIPE,
         stderr=subprocess.DEVNULL,
@@ -477,7 +478,7 @@ def _wash_scan(interface: str, duration: int = 25) -> None:
 
     output_lines: list[str] = []
 
-    proc = subprocess.Popen(
+    proc = radio.spawn(
         ["wash", "-i", interface, "-C"],   # -C: ignore FCS errors
         stdout=subprocess.PIPE,
         stderr=subprocess.DEVNULL,
@@ -554,7 +555,7 @@ def _run_wps(
     }
 
     try:
-        proc = subprocess.Popen(
+        proc = radio.spawn(
             cmd,
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,

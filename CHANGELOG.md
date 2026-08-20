@@ -5,6 +5,51 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [2.3.0] — 2026-08-20
+
+**Architecture & quality — Phase 3.** Every long-lived child process in the
+tool is now crash-safe. Previously only the handshake engine put its children
+in a killable process group; a crash or Ctrl-C during a scan, deauth, WPS or WEP
+attack could orphan `airodump-ng`/`reaver`/`aireplay-ng` and strand the card in
+monitor mode. That whole class of failure is now closed by construction.
+
+### Added
+
+- **Unified process API in `modules/radio.py`:**
+  - `spawn(cmd, *, supervise=True, **kwargs)` — the one true launcher. Drop-in
+    for `subprocess.Popen` that puts the child in its own session/process-group
+    (POSIX) and registers it with the global `SUPERVISOR`, so a crash or Ctrl-C
+    reaps it even if local cleanup never runs.
+  - `terminate_process(proc, grace)` — None-safe, already-dead-safe, group-aware
+    SIGTERM→SIGKILL. The single implementation the whole codebase shares.
+  - `managed_process(cmd, ...)` — context manager that guarantees a group-kill
+    on exit (normal, exception, or Ctrl-C), replacing scattered
+    `Popen / try / finally: terminate` boilerplate.
+- **Architectural guard test** (`tests/test_radio.py::TestNoUnsupervisedPopen`)
+  — fails CI if any module other than `radio.py` calls `subprocess.Popen`
+  directly, locking in the crash-safety invariant for good. Plus behavioural
+  tests for `spawn`/`terminate_process`/`managed_process` (real child processes).
+
+### Changed
+
+- **All 23 `subprocess.Popen` sites across 11 modules** (`scanner`, `deauth`,
+  `wps`, `wep`, `phantom`, `intercept`, `eapol_monitor`, `cracker`, `runner`,
+  `handshake`) now spawn through `radio.spawn`. `handshake._popen`/`_kill`
+  delegate to the shared implementation (behaviour preserved; the tested `_kill`
+  contract is intact). `deauth`'s tight burst loop reaps the supervisor registry
+  so it can't grow unbounded.
+- **`modules/handshake.py`** — `_channel_to_freq` now delegates to the shared,
+  band-aware `radio.channel_to_freq` (2.4 / 5 / **6 GHz**), and the capture
+  banner's band label uses `radio.band_of_channel` — one source of truth for
+  channel↔frequency across the codebase.
+
+### Verification
+
+- Full suite **310 passing** (`py -3.12 -m pytest -q`) — 302 + 8 new, zero
+  regressions. Public APIs unchanged.
+
+---
+
 ## [2.2.0] — 2026-08-20
 
 **Attack-surface expansion — Phase 2.** The scanner now sees every band the

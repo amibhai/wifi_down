@@ -420,3 +420,79 @@ class TestProcessSupervisor:
     def test_terminate_all_empty(self):
         sup = radio.ProcessSupervisor()
         assert sup.terminate_all() == 0
+
+
+class TestNoUnsupervisedPopen:
+    """
+    Architectural guard: every long-lived child must go through radio.spawn so
+    it is group-killable and reaped on crash. Only radio.py itself may call
+    subprocess.Popen directly. This stops a future edit silently reintroducing
+    an orphan that strands the card in monitor mode.
+    """
+
+    def test_modules_use_radio_spawn(self):
+        import pathlib
+        modules_dir = pathlib.Path(__file__).resolve().parent.parent / "modules"
+        offenders = []
+        for py in modules_dir.glob("*.py"):
+            if py.name == "radio.py":
+                continue
+            text = py.read_text(encoding="utf-8", errors="replace")
+            if "subprocess.Popen(" in text:
+                offenders.append(py.name)
+        assert not offenders, (
+            f"these modules call subprocess.Popen directly instead of "
+            f"radio.spawn (crash-safety hole): {offenders}"
+        )
+
+
+class TestTerminateProcess:
+    def test_none_safe(self):
+        radio.terminate_process(None)          # must not raise
+
+    def test_already_dead_safe(self):
+        p = subprocess.Popen([sys.executable, "-c", "pass"])
+        p.wait(timeout=10)
+        radio.terminate_process(p)             # must not raise
+
+    def test_kills_live_process(self):
+        p = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(30)"])
+        radio.terminate_process(p, grace=5.0)
+        assert p.poll() is not None
+
+
+class TestSpawnAndManaged:
+    def test_spawn_registers_globally(self):
+        before = len(radio.SUPERVISOR)
+        p = radio.spawn([sys.executable, "-c", "import time; time.sleep(30)"])
+        try:
+            assert len(radio.SUPERVISOR) == before + 1
+        finally:
+            radio.terminate_process(p, grace=5.0)
+            radio.SUPERVISOR.reap()
+
+    def test_spawn_unsupervised_not_registered(self):
+        before = len(radio.SUPERVISOR)
+        p = radio.spawn([sys.executable, "-c", "import time; time.sleep(30)"],
+                        supervise=False)
+        try:
+            assert len(radio.SUPERVISOR) == before
+        finally:
+            radio.terminate_process(p, grace=5.0)
+
+    def test_managed_process_reaps_on_exit(self):
+        with radio.managed_process(
+            [sys.executable, "-c", "import time; time.sleep(30)"]
+        ) as p:
+            assert p.poll() is None
+        assert p.poll() is not None            # reaped on context exit
+
+    def test_managed_process_reaps_on_exception(self):
+        captured = {}
+        with pytest.raises(RuntimeError):
+            with radio.managed_process(
+                [sys.executable, "-c", "import time; time.sleep(30)"]
+            ) as p:
+                captured["p"] = p
+                raise RuntimeError("boom")
+        assert captured["p"].poll() is not None

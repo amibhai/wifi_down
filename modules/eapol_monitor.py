@@ -31,6 +31,7 @@ import threading
 import time
 from dataclasses import dataclass, field
 from typing import Dict, List, Optional, Set
+from modules import radio
 
 logger = logging.getLogger(__name__)
 
@@ -408,7 +409,7 @@ def discover_clients(
     monitor = LiveMonitor(interface, bssid)
     try:
         try:
-            proc = subprocess.Popen(
+            proc = radio.spawn(
                 ["airodump-ng", "-c", str(channel), "-w", prefix, interface],
                 stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
                 preexec_fn=getattr(os, "setsid", None),

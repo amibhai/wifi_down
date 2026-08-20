@@ -40,6 +40,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import List, Optional, Set
 
+from modules import radio
 from modules.eapol_monitor import LiveMonitor
 from modules.ratelimit import DeauthRateLimiter, MAX_ALLOWED_BURSTS_PER_MIN
 
@@ -76,45 +77,25 @@ class WifiClient:
 
 def _popen(cmd: list, **kwargs) -> subprocess.Popen:
     """
-    Launch a subprocess in its own process group so we can kill the entire
-    tree with os.killpg(). This prevents zombie airodump-ng / aireplay-ng
-    processes if the parent Python process dies.
+    Launch a subprocess in its own process group so we can kill the entire tree
+    with a single group-kill, and register it with the global supervisor so it
+    is reaped even if this process dies. Prevents zombie airodump-ng /
+    aireplay-ng holding the card.
     """
     logger.debug("POPEN %s", cmd)
     kwargs.setdefault('stdout', subprocess.DEVNULL)
     kwargs.setdefault('stderr', subprocess.DEVNULL)
     try:
-        # os.setsid creates a new process group
-        return subprocess.Popen(cmd, preexec_fn=os.setsid, **kwargs)
+        # os.setsid creates a new process group (POSIX).
+        return radio.spawn(cmd, preexec_fn=os.setsid, **kwargs)
     except AttributeError:
-        # Windows fallback — no setsid
-        return subprocess.Popen(cmd, **kwargs)
+        # Windows fallback — no setsid.
+        return radio.spawn(cmd, **kwargs)
 
 
 def _kill(proc: Optional[subprocess.Popen]) -> None:
     """Terminate a process and its entire process group gracefully."""
-    if proc is None or proc.poll() is not None:
-        return
-    try:
-        # Kill the entire process group
-        pgid = os.getpgid(proc.pid)
-        os.killpg(pgid, signal.SIGTERM)
-        proc.wait(timeout=3)
-    except (subprocess.TimeoutExpired, ProcessLookupError):
-        try:
-            pgid = os.getpgid(proc.pid)
-            os.killpg(pgid, signal.SIGKILL)
-        except (ProcessLookupError, OSError):
-            pass
-    except (OSError, AttributeError):
-        # Fallback for systems without getpgid
-        try:
-            proc.terminate()
-            proc.wait(timeout=3)
-        except subprocess.TimeoutExpired:
-            proc.kill()
-        except Exception:
-            pass
+    radio.terminate_process(proc, grace=3.0)
     logger.debug("KILLED pid=%s", proc.pid if proc else "None")
 
 
@@ -188,22 +169,21 @@ def _verify_channel(iface: str, expected: int) -> bool:
 
 
 def _channel_to_freq(channel: int) -> Optional[int]:
-    """Map a Wi-Fi channel number to its centre frequency in MHz (2.4 + 5 GHz)."""
-    if 1 <= channel <= 13:
-        return 2412 + (channel - 1) * 5
-    if channel == 14:
-        return 2484
-    if 32 <= channel <= 177:          # 5 GHz band
-        return 5000 + channel * 5
-    return None
+    """Map a Wi-Fi channel to its centre frequency in MHz (2.4 / 5 / 6 GHz).
+
+    Delegates to the shared, band-aware :func:`radio.channel_to_freq` so the
+    whole codebase agrees on channel↔frequency (6 GHz included).
+    """
+    return radio.channel_to_freq(channel)
 
 
 def _set_channel(iface: str, channel: int) -> bool:
     """Set channel and verify with readback. Retries up to 3 times.
 
-    Band-aware: on 5 GHz (ch > 14) some drivers only honour `iw set freq`, so we
-    issue both `set channel` and `set freq` per attempt before the readback.
-    Exactly one `_verify_channel` call per attempt keeps the retry contract stable.
+    Band-aware: off 2.4 GHz (ch > 14, i.e. 5/6 GHz) some drivers only honour
+    `iw set freq`, so we issue both `set channel` and `set freq` per attempt
+    before the readback. Exactly one `_verify_channel` call per attempt keeps
+    the retry contract stable.
     """
     freq = _channel_to_freq(channel)
     for attempt in range(3):
@@ -759,7 +739,7 @@ def capture_handshake(
             logger.info("Non-crackable target %s (%s) — capture skipped", bssid, security)
             return None
 
-    band = "5GHz" if channel > 14 else "2.4GHz"
+    band = radio.band_of_channel(channel) + "GHz"
     logger.info("=" * 60)
     logger.info("CAPTURE START: %s (%s) CH%d (%s) timeout=%ds",
                 ssid, bssid, channel, band, timeout)

@@ -33,6 +33,7 @@ from rich.panel import Panel
 
 from .exceptions import DependencyError
 from .runner import SubprocessRunner
+from modules import radio
 
 logger = logging.getLogger(__name__)
 console = Console()
@@ -414,7 +415,7 @@ def _run_phantom(
 
     # ── Start hostapd ─────────────────────────────────────────────────────
     console.print(f"  [cyan][*][/cyan] Starting hostapd (personality {personality})...")
-    hostapd_proc = subprocess.Popen(
+    hostapd_proc = radio.spawn(
         ["hostapd", str(hostapd_conf)],
         stdout=subprocess.PIPE, stderr=subprocess.PIPE,
     )
@@ -427,7 +428,7 @@ def _run_phantom(
 
     # ── Start dnsmasq ─────────────────────────────────────────────────────
     console.print(f"  [cyan][*][/cyan] Starting dnsmasq (DHCP + DNS redirect)...")
-    dnsmasq_proc = subprocess.Popen(
+    dnsmasq_proc = radio.spawn(
         ["dnsmasq", "-C", str(dnsmasq_conf), "--no-daemon"],
         stdout=subprocess.PIPE, stderr=subprocess.PIPE,
     )

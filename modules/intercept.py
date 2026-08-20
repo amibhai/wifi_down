@@ -33,6 +33,7 @@ from rich import box
 from rich.console import Console
 from rich.panel import Panel
 from rich.table import Table
+from modules import radio
 
 logger = logging.getLogger(__name__)
 console = Console()
@@ -206,7 +207,7 @@ def _run_bettercap_stream(
 
     cmd = ["bettercap", "-iface", iface, "-caplet", str(caplet), "-json"]
     try:
-        proc = subprocess.Popen(
+        proc = radio.spawn(
             cmd,
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,

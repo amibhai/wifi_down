@@ -42,6 +42,7 @@ import shutil
 import signal
 import subprocess
 import time
+from contextlib import contextmanager
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Iterable, Optional
@@ -614,8 +615,43 @@ def has_pending_restore() -> bool:
 
 
 # ══════════════════════════════════════════════════════════════════════════════
-# ProcessSupervisor  (crash-safe child reaping)
+# Process management  (crash-safe child spawning + reaping)
 # ══════════════════════════════════════════════════════════════════════════════
+
+def terminate_process(proc: Optional[subprocess.Popen], grace: float = 3.0) -> None:
+    """
+    Gracefully stop a process **and its whole process group** (SIGTERM, then
+    SIGKILL after *grace*). None-safe and already-dead-safe. On POSIX this reaps
+    the entire session started by :func:`spawn`, so a wrapper like ``reaver`` or
+    a shell can never leave a grandchild holding the card.
+    """
+    if proc is None or proc.poll() is not None:
+        return
+    try:
+        if os.name == "posix":
+            try:
+                os.killpg(os.getpgid(proc.pid), signal.SIGTERM)
+            except (ProcessLookupError, PermissionError, OSError):
+                proc.terminate()
+        else:  # pragma: no cover - non-POSIX dev box
+            proc.terminate()
+    except Exception:  # pragma: no cover
+        pass
+    try:
+        proc.wait(timeout=grace)
+    except subprocess.TimeoutExpired:
+        try:
+            if os.name == "posix":
+                os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
+            else:  # pragma: no cover
+                proc.kill()
+        except Exception:  # pragma: no cover
+            pass
+        try:
+            proc.wait(timeout=grace)
+        except Exception:  # pragma: no cover
+            pass
+
 
 class ProcessSupervisor:
     """
@@ -630,7 +666,9 @@ class ProcessSupervisor:
 
     def spawn(self, cmd: list[str], **kwargs) -> subprocess.Popen:
         """Popen wrapper that starts a new session (process group) on POSIX."""
-        if os.name == "posix" and "start_new_session" not in kwargs:
+        if (os.name == "posix"
+                and "start_new_session" not in kwargs
+                and "preexec_fn" not in kwargs):
             kwargs["start_new_session"] = True
         proc = subprocess.Popen(cmd, **kwargs)
         self._procs.append(proc)
@@ -641,36 +679,11 @@ class ProcessSupervisor:
         self._procs.append(proc)
         return proc
 
-    def _terminate_one(self, proc: subprocess.Popen, grace: float) -> None:
-        if proc.poll() is not None:
-            return
-        try:
-            if os.name == "posix":
-                try:
-                    pgid = os.getpgid(proc.pid)
-                    os.killpg(pgid, signal.SIGTERM)
-                except (ProcessLookupError, PermissionError, OSError):
-                    proc.terminate()
-            else:  # pragma: no cover - non-POSIX dev box
-                proc.terminate()
-        except Exception:  # pragma: no cover
-            pass
-        try:
-            proc.wait(timeout=grace)
-        except subprocess.TimeoutExpired:
-            try:
-                if os.name == "posix":
-                    os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
-                else:  # pragma: no cover
-                    proc.kill()
-            except Exception:  # pragma: no cover
-                pass
-
     def terminate_all(self, grace: float = 3.0) -> int:
         """Terminate every tracked process. Returns how many were still alive."""
         alive = [p for p in self._procs if p.poll() is None]
         for proc in alive:
-            self._terminate_one(proc, grace)
+            terminate_process(proc, grace)
         self._procs.clear()
         return len(alive)
 
@@ -684,6 +697,43 @@ class ProcessSupervisor:
 
 # Process-wide supervisor used by the RF modules.
 SUPERVISOR = ProcessSupervisor()
+
+
+def spawn(cmd: list[str], *, supervise: bool = True, **kwargs) -> subprocess.Popen:
+    """
+    The one true way to launch a long-lived child in this codebase.
+
+    Drop-in for ``subprocess.Popen(cmd, **kwargs)`` that (a) puts the child in
+    its own session/process-group on POSIX so it can be group-killed, and
+    (b) registers it with the global :data:`SUPERVISOR` so a crash or Ctrl-C
+    reaps it even if the local cleanup path never runs. Pass ``supervise=False``
+    for a child you promise to manage entirely yourself.
+    """
+    if supervise:
+        return SUPERVISOR.spawn(cmd, **kwargs)
+    if (os.name == "posix"
+            and "start_new_session" not in kwargs
+            and "preexec_fn" not in kwargs):
+        kwargs["start_new_session"] = True
+    return subprocess.Popen(cmd, **kwargs)
+
+
+@contextmanager
+def managed_process(cmd: list[str], *, grace: float = 3.0, **kwargs):
+    """
+    Context manager for a scoped child: spawn on enter, guaranteed group-kill on
+    exit (normal, exception, or Ctrl-C). Replaces the error-prone
+    ``Popen(...) / try / finally: terminate()`` boilerplate scattered across the
+    attack modules.
+
+        with radio.managed_process(["airodump-ng", ...]) as p:
+            ...                      # p is reaped no matter how we leave
+    """
+    proc = spawn(cmd, **kwargs)
+    try:
+        yield proc
+    finally:
+        terminate_process(proc, grace)
 
 
 # ══════════════════════════════════════════════════════════════════════════════

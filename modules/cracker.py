@@ -16,6 +16,7 @@ import shutil
 import subprocess
 import time
 from datetime import datetime
+from modules import radio
 from modules.banner import C, info, success, warn, error, found, print_section
 
 RESULTS_DIR = "results"
@@ -175,7 +176,7 @@ def _run_aircrack(capture_file: str, wordlist_file: str) -> None:
     output_lines: list[str] = []
 
     try:
-        proc = subprocess.Popen(
+        proc = radio.spawn(
             cmd,
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,
@@ -240,7 +241,7 @@ def _run_cowpatty(capture_file: str, wordlist_file: str, ssid: str) -> None:
     output_lines: list[str] = []
 
     try:
-        proc = subprocess.Popen(
+        proc = radio.spawn(
             cmd,
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,
@@ -320,7 +321,7 @@ def _run_hashcat(hash_file: str, wordlist_file: str, rules: str | None = None) -
 
     start = time.time()
     try:
-        proc = subprocess.Popen(
+        proc = radio.spawn(
             cmd,
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,

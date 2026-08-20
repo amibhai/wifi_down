@@ -14,6 +14,7 @@ import tempfile
 import time
 from typing import Optional
 
+from modules import radio
 from modules.banner import C, info, success, warn, error, print_section
 
 logger = logging.getLogger(__name__)
@@ -285,7 +286,7 @@ def scan_networks(
 
     cmd = ["airodump-ng", "--write", out_base, "--output-format", "csv",
            "--write-interval", "2", "--band", band_flag, interface]
-    proc = subprocess.Popen(
+    proc = radio.spawn(
         cmd,
         stdout=subprocess.DEVNULL,
         stderr=subprocess.DEVNULL,

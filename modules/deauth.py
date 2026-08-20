@@ -20,6 +20,7 @@ from typing import Optional
 
 import subprocess
 
+from modules import radio
 from modules.banner import C, info, success, warn, error, print_section
 from modules.ratelimit import DeauthRateLimiter, DEFAULT_MAX_BURSTS_PER_MIN
 
@@ -308,7 +309,7 @@ def _run_continuous(
                 if not limiter.record_frame():
                     time.sleep(0.1)
                 cmd = _build_cmd(interface, bssid, mac, per_round)
-                p = subprocess.Popen(
+                p = radio.spawn(
                     cmd, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True
                 )
                 procs.append(p)
@@ -318,6 +319,7 @@ def _run_continuous(
             # Reap finished bursts so the process list stays bounded.
             for p in [p for p in procs if p.poll() is not None]:
                 procs.remove(p)
+            radio.SUPERVISOR.reap()
             time.sleep(BURST_INTERVAL)
     except KeyboardInterrupt:
         warn("Attack stopped by user.")
@@ -330,7 +332,7 @@ def _run_burst(
     for mac in clients:
         limiter.wait_for_burst(bssid)
         cmd = _build_cmd(interface, bssid, mac, burst_count)
-        p = subprocess.Popen(
+        p = radio.spawn(
             cmd, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True
         )
         procs.append(p)
@@ -339,6 +341,7 @@ def _run_burst(
 
     for p in procs:
         p.wait()
+    radio.SUPERVISOR.reap()
     total_pkts = sum(s["packets"] for s in stats.values())
     total_acks = sum(s["acks"]    for s in stats.values())
     success(f"Burst complete — {total_pkts} frames sent, {total_acks} ACKs")

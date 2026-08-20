@@ -8,6 +8,7 @@ from collections.abc import Callable
 from typing import Optional
 
 from .exceptions import CaptureError, CrackError, DependencyError
+from modules import radio
 
 logger = logging.getLogger(__name__)
 
@@ -90,7 +91,7 @@ class SubprocessRunner:
         """
         logger.debug("STREAM argv=%s", cmd)
         try:
-            proc = subprocess.Popen(
+            proc = radio.spawn(
                 cmd,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
