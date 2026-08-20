@@ -36,6 +36,7 @@ from modules.handshake import (
     _parse_clients,
     _rm,
     _set_channel,
+    _channel_to_freq,
     _start_deauth,
     _verify,
     _verify_aircrack,
@@ -635,3 +636,29 @@ class TestInterfaceMatching:
     def test_different_interface(self):
         from modules.interface import _interface_matches
         assert _interface_matches('wlan1', 'wlan0') is False
+
+
+# ── 6 GHz band-aware channel resolution (Phase 8) ────────────────────────────
+
+class TestBandAwareChannel:
+    def test_6ghz_channel_maps_to_6ghz_freq(self):
+        # ch 37 exists in both 5 GHz and 6 GHz; the band hint must disambiguate.
+        assert _channel_to_freq(37, "6") == 6135
+        assert _channel_to_freq(37, "5") == 5185
+
+    def test_low_channel_band_disambiguation(self):
+        # ch 1 is 2.4 GHz by default but 5955 MHz when the target is 6 GHz.
+        assert _channel_to_freq(1) == 2412
+        assert _channel_to_freq(1, "6") == 5955
+
+    def test_2ghz_and_5ghz_unchanged(self):
+        assert _channel_to_freq(6) == 2437
+        assert _channel_to_freq(36) == 5180
+
+    def test_set_channel_accepts_band_arg(self):
+        import inspect
+        assert "band" in inspect.signature(_set_channel).parameters
+
+    def test_capture_handshake_accepts_band_arg(self):
+        import inspect
+        assert "band" in inspect.signature(capture_handshake).parameters

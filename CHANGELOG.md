@@ -5,6 +5,34 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [2.8.0] — 2026-08-20
+
+**6 GHz channel-locking, end to end — Phase 8.** 2.2.0 taught the scanner to
+*see* 6 GHz; this threads the band all the way through capture so the radio
+actually *locks* onto it. 6 GHz channel numbers overlap 2.4 GHz (both use 1–233 /
+1–14), so a bare `iw set channel 37` lands on 2.4 GHz — the target's scan-derived
+band is now the disambiguator.
+
+### Changed
+
+- **`modules/handshake.py`:**
+  - `capture_handshake(..., band="")` — accepts the target's band tag.
+  - `_channel_to_freq(channel, band=None)` and `_set_channel(iface, channel,
+    band=None)` are band-aware: 2.4 GHz sets the channel, 5 GHz sets channel +
+    freq, **6 GHz locks by frequency only** (a channel-number set would hit the
+    wrong band).
+  - The capture banner labels the true band (2.4/5/6 GHz).
+- **`wifi_auditor/cli.py`** — all three `capture_handshake()` call sites pass
+  `band=target.get("band", "")`, so the band the scanner tagged flows straight
+  into the channel lock.
+
+### Verification
+
+- Full suite **402 passing** (`py -3.12 -m pytest -q`) — 397 + 5 new band-aware
+  channel tests; the tested retry contract of `_set_channel` is preserved.
+
+---
+
 ## [2.7.0] — 2026-08-20
 
 **Offline WPA verification crypto + a zero-dependency cracker — Phase 7.** The

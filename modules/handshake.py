@@ -168,33 +168,30 @@ def _verify_channel(iface: str, expected: int) -> bool:
     return True
 
 
-def _channel_to_freq(channel: int) -> Optional[int]:
+def _channel_to_freq(channel: int, band: Optional[str] = None) -> Optional[int]:
     """Map a Wi-Fi channel to its centre frequency in MHz (2.4 / 5 / 6 GHz).
 
-    Delegates to the shared, band-aware :func:`radio.channel_to_freq` so the
-    whole codebase agrees on channel↔frequency (6 GHz included).
+    Delegates to the shared, band-aware :func:`radio.channel_to_freq`. Pass
+    *band* ('2.4'/'5'/'6') to disambiguate — channels 1–14 exist in both 2.4 and
+    6 GHz, so without the hint a 6 GHz low channel would be mis-mapped to 2.4.
     """
-    return radio.channel_to_freq(channel)
+    return radio.channel_to_freq(channel, band)
 
 
-def _set_channel(iface: str, channel: int) -> bool:
+def _set_channel(iface: str, channel: int, band: Optional[str] = None) -> bool:
     """Set channel and verify with readback. Retries up to 3 times.
 
-    Band-aware: off 2.4 GHz (ch > 14, i.e. 5/6 GHz) some drivers only honour
-    `iw set freq`, so we issue both `set channel` and `set freq` per attempt
-    before the readback. Exactly one `_verify_channel` call per attempt keeps
-    the retry contract stable.
+    Band-aware:
+      • 2.4 GHz — ``iw set channel`` is enough.
+      • 5 GHz  — some drivers only honour ``iw set freq``, so we issue both.
+      • 6 GHz  — channel numbers overlap 2.4 GHz, so we lock **by frequency**
+        (``iw set freq``) exclusively; ``set channel N`` would land on 2.4 GHz.
+    Exactly one ``_verify_channel`` call per attempt keeps the retry contract.
     """
-    freq = _channel_to_freq(channel)
+    b = band or radio.band_of_channel(channel)
+    freq = _channel_to_freq(channel, band)
     for attempt in range(3):
-        try:
-            subprocess.run(
-                ['iw', 'dev', iface, 'set', 'channel', str(channel)],
-                capture_output=True, timeout=5,
-            )
-        except (subprocess.TimeoutExpired, FileNotFoundError):
-            pass
-        if freq and channel > 14:
+        if b == "6" and freq:
             try:
                 subprocess.run(
                     ['iw', 'dev', iface, 'set', 'freq', str(freq)],
@@ -202,6 +199,22 @@ def _set_channel(iface: str, channel: int) -> bool:
                 )
             except (subprocess.TimeoutExpired, FileNotFoundError):
                 pass
+        else:
+            try:
+                subprocess.run(
+                    ['iw', 'dev', iface, 'set', 'channel', str(channel)],
+                    capture_output=True, timeout=5,
+                )
+            except (subprocess.TimeoutExpired, FileNotFoundError):
+                pass
+            if freq and b in ("5", "6"):
+                try:
+                    subprocess.run(
+                        ['iw', 'dev', iface, 'set', 'freq', str(freq)],
+                        capture_output=True, timeout=5,
+                    )
+                except (subprocess.TimeoutExpired, FileNotFoundError):
+                    pass
         time.sleep(0.3)
         if _verify_channel(iface, channel):
             return True
@@ -706,6 +719,7 @@ def capture_handshake(
     timeout: int = DEFAULT_TIMEOUT,
     deauth_count: int = 12,
     security: str = "",
+    band: str = "",
 ) -> Optional[str]:
     """
     Capture a crackable WPA/WPA2 4-way handshake (or PMKID). Returns the saved
@@ -755,12 +769,15 @@ def capture_handshake(
             logger.info("Non-crackable target %s (%s) — capture skipped", bssid, security)
             return None
 
-    band = radio.band_of_channel(channel) + "GHz"
+    # Effective band: prefer the caller's scan-derived tag (unambiguous for the
+    # 6 GHz ch 1–14 that overlap 2.4 GHz), else infer from the channel number.
+    eff_band = band if band in ("2.4", "5", "6") else radio.band_of_channel(channel)
+    band_label = eff_band + "GHz"
     logger.info("=" * 60)
     logger.info("CAPTURE START: %s (%s) CH%d (%s) timeout=%ds",
-                ssid, bssid, channel, band, timeout)
+                ssid, bssid, channel, band_label, timeout)
     print(f'\n  [*] Target : {ssid}  ({bssid})')
-    print(f'  [*] Channel: {channel}  ({band})')
+    print(f'  [*] Channel: {channel}  ({band_label})')
     print(f'  [*] Budget : {timeout}s   (event-driven — exits the instant a handshake lands)')
 
     tmpdir     = tempfile.mkdtemp(prefix='wd_hs_')
@@ -820,8 +837,8 @@ def capture_handshake(
     try:
         # ── Pre-capture: clear interferers, lock channel ─────────────────────
         _kill_interfering()
-        print(f'  [*] Locking channel {channel} ({band})...')
-        if not _set_channel(iface, channel):
+        print(f'  [*] Locking channel {channel} ({band_label})...')
+        if not _set_channel(iface, channel, eff_band):
             print('  [!] Channel lock unverified — proceeding')
             logger.warning("Channel lock failed for ch%d", channel)
 
@@ -869,7 +886,7 @@ def capture_handshake(
             if saved:
                 return saved
 
-            if not _set_channel(iface, channel):
+            if not _set_channel(iface, channel, eff_band):
                 logger.warning("Channel re-lock failed before round #%d", round_num)
             if not _is_alive(airodump_proc):
                 logger.error("airodump-ng died — restarting")
