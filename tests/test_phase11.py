@@ -4,9 +4,8 @@ personality, and raw-.cap handshake assembly. Pure logic only.
 """
 from __future__ import annotations
 
-from modules import strategy, wpacrypto as wc, pmkid
-from modules import phantom
-
+from modules import phantom, pmkid, strategy
+from modules import wpacrypto as wc
 
 # ── #2 Mask attacks ──────────────────────────────────────────────────────────
 
@@ -30,7 +29,7 @@ class TestMasks:
             out_dir=str(tmp_path))
         assert p and p.endswith(".hcmask")
         lines = open(p, encoding="utf-8").read().splitlines()
-        assert all(set(l) <= set("?d") for l in lines)
+        assert all(set(ln) <= set("?d") for ln in lines)
 
     def test_materialize_none_for_enterprise(self, tmp_path):
         assert strategy.materialize_masks(

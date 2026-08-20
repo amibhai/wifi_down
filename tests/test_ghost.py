@@ -4,11 +4,13 @@ from __future__ import annotations
 import json
 import time
 from pathlib import Path
-from unittest.mock import patch, AsyncMock, MagicMock
-import pytest
+from unittest.mock import AsyncMock, patch
 
 from modules.ghost import (
-    GhostReport, CVEEntry, _cache_key, _cache_get, _cache_set,
+    CVEEntry,
+    GhostReport,
+    _cache_get,
+    _cache_set,
 )
 
 
@@ -103,8 +105,9 @@ class TestGhostMissingDep:
 
     def test_nvd_failure_returns_empty(self) -> None:
         """If NVD API fails, run_ghost_tracker returns empty CVE list."""
-        from modules.ghost import run_ghost_tracker
         import unittest.mock as mock
+
+        from modules.ghost import run_ghost_tracker
 
         with mock.patch("modules.ghost._query_nvd", new_callable=AsyncMock) as m:
             m.side_effect = Exception("Network error")

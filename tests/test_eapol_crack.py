@@ -9,9 +9,8 @@ EAPOL path end to end with no RF and no external tools.
 """
 from __future__ import annotations
 
-from modules import wpacrypto as wc
 from modules import pmkid
-
+from modules import wpacrypto as wc
 
 SSID = "HandshakeNet"
 AP   = "aabbccddeeff"

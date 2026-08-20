@@ -32,17 +32,15 @@ import logging
 import os
 import re
 import shutil
-import signal
 import subprocess
 import tempfile
 import time
 from dataclasses import dataclass
 from pathlib import Path
-from typing import List, Optional, Set
 
 from modules import radio
 from modules.eapol_monitor import LiveMonitor
-from modules.ratelimit import DeauthRateLimiter, MAX_ALLOWED_BURSTS_PER_MIN
+from modules.ratelimit import MAX_ALLOWED_BURSTS_PER_MIN, DeauthRateLimiter
 
 logger = logging.getLogger(__name__)
 
@@ -66,11 +64,15 @@ class WifiClient:
 
     @property
     def signal_label(self) -> str:
-        if self.power == -100:  return "unknown signal"
-        if self.power >= -50:   return f"{self.power} dBm  [excellent]"
-        if self.power >= -65:   return f"{self.power} dBm  [good]"
-        if self.power >= -75:   return f"{self.power} dBm  [fair]"
-        return                         f"{self.power} dBm  [weak]"
+        if self.power == -100:
+            return "unknown signal"
+        if self.power >= -50:
+            return f"{self.power} dBm  [excellent]"
+        if self.power >= -65:
+            return f"{self.power} dBm  [good]"
+        if self.power >= -75:
+            return f"{self.power} dBm  [fair]"
+        return f"{self.power} dBm  [weak]"
 
 
 # ─── Process management ──────────────────────────────────────────────────────
@@ -93,20 +95,20 @@ def _popen(cmd: list, **kwargs) -> subprocess.Popen:
         return radio.spawn(cmd, **kwargs)
 
 
-def _kill(proc: Optional[subprocess.Popen]) -> None:
+def _kill(proc: subprocess.Popen | None) -> None:
     """Terminate a process and its entire process group gracefully."""
     radio.terminate_process(proc, grace=3.0)
     logger.debug("KILLED pid=%s", proc.pid if proc else "None")
 
 
-def _is_alive(proc: Optional[subprocess.Popen]) -> bool:
+def _is_alive(proc: subprocess.Popen | None) -> bool:
     """Check if a process is still running."""
     return proc is not None and proc.poll() is None
 
 
 # ─── File helpers ─────────────────────────────────────────────────────────────
 
-def _find_cap(prefix: str) -> Optional[str]:
+def _find_cap(prefix: str) -> str | None:
     """
     airodump-ng writes PREFIX-01.cap (never PREFIX.cap).
     Returns the most recently modified .cap file for this prefix.
@@ -115,7 +117,7 @@ def _find_cap(prefix: str) -> Optional[str]:
     return max(hits, key=os.path.getmtime) if hits else None
 
 
-def _find_csv(prefix: str) -> Optional[str]:
+def _find_csv(prefix: str) -> str | None:
     """Return the airodump-ng CSV file (PREFIX-01.csv)."""
     hits = glob.glob(prefix + '-*.csv')
     return max(hits, key=os.path.getmtime) if hits else None
@@ -168,7 +170,7 @@ def _verify_channel(iface: str, expected: int) -> bool:
     return True
 
 
-def _channel_to_freq(channel: int, band: Optional[str] = None) -> Optional[int]:
+def _channel_to_freq(channel: int, band: str | None = None) -> int | None:
     """Map a Wi-Fi channel to its centre frequency in MHz (2.4 / 5 / 6 GHz).
 
     Delegates to the shared, band-aware :func:`radio.channel_to_freq`. Pass
@@ -178,7 +180,7 @@ def _channel_to_freq(channel: int, band: Optional[str] = None) -> Optional[int]:
     return radio.channel_to_freq(channel, band)
 
 
-def _set_channel(iface: str, channel: int, band: Optional[str] = None) -> bool:
+def _set_channel(iface: str, channel: int, band: str | None = None) -> bool:
     """Set channel and verify with readback. Retries up to 3 times.
 
     Band-aware:
@@ -225,7 +227,7 @@ def _set_channel(iface: str, channel: int, band: Optional[str] = None) -> bool:
 
 # ─── Client CSV parser ───────────────────────────────────────────────────────
 
-def _parse_clients(csv_path: str, target_bssid: str) -> List[WifiClient]:
+def _parse_clients(csv_path: str, target_bssid: str) -> list[WifiClient]:
     """
     Parse airodump-ng CSV Station section for clients of target_bssid.
 
@@ -236,13 +238,13 @@ def _parse_clients(csv_path: str, target_bssid: str) -> List[WifiClient]:
     if not csv_path or not os.path.exists(csv_path):
         return []
 
-    clients: List[WifiClient] = []
-    seen: Set[str] = set()
+    clients: list[WifiClient] = []
+    seen: set[str] = set()
     in_stations = False
     target_up = target_bssid.strip().upper()
 
     try:
-        with open(csv_path, 'r', errors='replace') as fh:
+        with open(csv_path, errors='replace') as fh:
             lines = [ln.replace('\0', '') for ln in fh]
 
         for row in csv.reader(lines):
@@ -408,7 +410,7 @@ def _verify_hcxpcapngtool(cap_path: str, bssid: str, tmpdir: str) -> bool:
                            capture_output=True, timeout=20)
             if os.path.exists(hc22k) and os.path.getsize(hc22k) > 0:
                 needle = bssid.lower().replace(':', '')
-                with open(hc22k, 'r', errors='replace') as fh:
+                with open(hc22k, errors='replace') as fh:
                     for line in fh:
                         if needle in line.lower().replace(':', ''):
                             logger.info("hcxpcapngtool verified: hash found for %s", bssid)
@@ -453,7 +455,7 @@ def _save(cap_path: str, bssid: str) -> str:
                     # Tell the operator exactly what is in the capture and
                     # whether it is crackable — before any wordlist is run.
                     try:
-                        from modules.pmkid import summarize_hash_file, describe_summary
+                        from modules.pmkid import describe_summary, summarize_hash_file
                         summary = summarize_hash_file(hc)
                         print(f'      capture: {describe_summary(summary)}')
                         for b, net in summary['networks'].items():
@@ -478,7 +480,7 @@ def _save(cap_path: str, bssid: str) -> str:
 def _deauth_burst_parallel(
     iface: str,
     bssid: str,
-    client_macs: List[str],
+    client_macs: list[str],
     count: int,
 ) -> None:
     """
@@ -487,7 +489,7 @@ def _deauth_burst_parallel(
     Pass an empty list for broadcast (FF:FF:FF:FF:FF:FF).
     """
     targets = client_macs if client_macs else [None]
-    procs: List[subprocess.Popen] = []
+    procs: list[subprocess.Popen] = []
 
     for mac in targets:
         cmd = [
@@ -520,7 +522,7 @@ def _deauth_burst_parallel(
 def _start_deauth(
     iface: str,
     bssid: str,
-    client_mac: Optional[str] = None,
+    client_mac: str | None = None,
 ) -> subprocess.Popen:
     """Infinite deauth — kept for backward-compat (test imports). Not used by capture_handshake."""
     cmd = [
@@ -563,7 +565,7 @@ def _start_airodump_capture(
 
 # ─── hcxdumptool version detection + PMKID ───────────────────────────────────
 
-def _detect_hcxdumptool_version() -> Optional[str]:
+def _detect_hcxdumptool_version() -> str | None:
     """Detect hcxdumptool version for correct flag syntax."""
     try:
         r = subprocess.run(
@@ -579,7 +581,7 @@ def _detect_hcxdumptool_version() -> Optional[str]:
     return None
 
 
-def _pmkid(bssid: str, iface: str, tmpdir: str, duration: int = 60) -> Optional[str]:
+def _pmkid(bssid: str, iface: str, tmpdir: str, duration: int = 60) -> str | None:
     """
     Passive PMKID capture via hcxdumptool.
     Only called after airodump-ng has been killed (interface released).
@@ -687,7 +689,7 @@ def verify_handshake(cap_file: str, bssid: str, ssid: str = '') -> bool:
         shutil.rmtree(tmpdir, ignore_errors=True)
 
 
-def _merge_clients(monitor: LiveMonitor, cap_prefix: str, bssid: str) -> List["WifiClient"]:
+def _merge_clients(monitor: LiveMonitor, cap_prefix: str, bssid: str) -> list[WifiClient]:
     """Union of live-monitor clients (active, reliable) and airodump CSV clients.
 
     The monitor learns stations from real data frames continuously; the CSV is a
@@ -720,7 +722,7 @@ def capture_handshake(
     deauth_count: int = 12,
     security: str = "",
     band: str = "",
-) -> Optional[str]:
+) -> str | None:
     """
     Capture a crackable WPA/WPA2 4-way handshake (or PMKID). Returns the saved
     file path, or None.
@@ -783,7 +785,7 @@ def capture_handshake(
     tmpdir     = tempfile.mkdtemp(prefix='wd_hs_')
     cap_prefix = os.path.join(tmpdir, 'capture')
     child_procs: list[subprocess.Popen] = []
-    airodump_proc: Optional[subprocess.Popen] = None
+    airodump_proc: subprocess.Popen | None = None
     monitor = LiveMonitor(iface, bssid)
     limiter = DeauthRateLimiter(max_bursts_per_min=MAX_ALLOWED_BURSTS_PER_MIN)
     last_verify = [0.0]
@@ -798,7 +800,7 @@ def capture_handshake(
         for p in child_procs:
             _kill(p)
 
-    def _try_save(reason: str, grace: bool) -> Optional[str]:
+    def _try_save(reason: str, grace: bool) -> str | None:
         """Authoritative on-disk verify → save. `grace` gives airodump time to
         flush right after a monitor trigger."""
         cap = _find_cap(cap_prefix)
@@ -818,7 +820,7 @@ def capture_handshake(
             cap = _find_cap(cap_prefix) or cap
         return None
 
-    def _monitor_trigger() -> Optional[str]:
+    def _monitor_trigger() -> str | None:
         """If the live sniffer saw a crackable EAPOL pair (or PMKID), confirm on
         disk. Rate-limited so we don't re-verify every poll tick."""
         snap = monitor.snapshot()

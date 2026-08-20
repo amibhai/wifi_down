@@ -19,9 +19,8 @@ import re
 import sqlite3
 import time
 from dataclasses import dataclass, field
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 from pathlib import Path
-from typing import Optional
 
 from rich import box
 from rich.console import Console
@@ -77,7 +76,7 @@ class GhostReport:
     routersploit_modules: list[RouterSploitEntry] = field(default_factory=list)
     shodan_ports: list[int]           = field(default_factory=list)
     shodan_vulns: list[str]           = field(default_factory=list)
-    public_ip: Optional[str]          = None
+    public_ip: str | None          = None
     queried_at: str                   = ""
 
     @property
@@ -128,7 +127,7 @@ def _db_connect() -> sqlite3.Connection:
     return conn
 
 
-def _cache_get(key: str) -> Optional[dict]:
+def _cache_get(key: str) -> dict | None:
     try:
         conn = _db_connect()
         row = conn.execute(
@@ -332,7 +331,7 @@ async def _query_shodan_internetdb(ip: str) -> tuple[list[int], list[str]]:
     return ports, vulns
 
 
-async def _get_public_ip_from_traceroute(target_ip: Optional[str] = None) -> Optional[str]:
+async def _get_public_ip_from_traceroute(target_ip: str | None = None) -> str | None:
     """Attempt to determine public IP via traceroute (best-effort, silent fail)."""
     return None  # Passive default — no active probing without user intent
 
@@ -343,7 +342,7 @@ async def _run_ghost_async(
     bssid: str,
     vendor: str,
     model: str = "",
-    public_ip: Optional[str] = None,
+    public_ip: str | None = None,
 ) -> GhostReport:
     """Run all three source queries in parallel and aggregate results."""
     vendor_clean = re.sub(r"[^\w\s-]", "", vendor).strip()
@@ -379,7 +378,7 @@ def run_ghost_tracker(
     bssid: str,
     vendor: str,
     model: str = "",
-    public_ip: Optional[str] = None,
+    public_ip: str | None = None,
 ) -> GhostReport:
     """Synchronous wrapper around the async ghost runner."""
     try:
@@ -463,7 +462,7 @@ def display_ghost_report(report: GhostReport) -> None:
 
 # ─── CLI entry point ──────────────────────────────────────────────────────────
 
-def ghost_menu(target: Optional[dict]) -> Optional[GhostReport]:
+def ghost_menu(target: dict | None) -> GhostReport | None:
     """Interactive Ghost Signal Tracker launcher."""
     console.print()
     console.print(Panel(
@@ -481,7 +480,6 @@ def ghost_menu(target: Optional[dict]) -> Optional[GhostReport]:
 
     bssid  = target.get("bssid", "")
     vendor = target.get("vendor") or ""
-    ssid   = target.get("ssid", "")
 
     if not vendor:
         console.print(f"  [yellow][!][/yellow] Vendor unknown for {bssid}")
@@ -492,7 +490,7 @@ def ghost_menu(target: Optional[dict]) -> Optional[GhostReport]:
 
     model = ""
     try:
-        model_in = input(f"  Model hint (optional, press Enter to skip): ").strip()
+        model_in = input("  Model hint (optional, press Enter to skip): ").strip()
         model = model_in
     except (KeyboardInterrupt, EOFError):
         pass

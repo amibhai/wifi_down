@@ -20,13 +20,12 @@ aircrack-ng auto-detects; we try both if needed.
 
 import os
 import re
-import time
 import subprocess
-import threading
+import time
 from datetime import datetime
 
 from modules import radio
-from modules.banner import C, info, success, warn, error, found, print_section
+from modules.banner import C, error, found, info, print_section, success, warn
 
 CAPTURE_DIR        = 'captures'
 RESULTS_DIR        = 'results'
@@ -191,16 +190,16 @@ def _pipeline_fragmentation(interface, bssid, channel, essid, cap_base) -> str |
     output_lines = []
     try:
         for line in frag_proc.stdout:
-            l = line.strip()
-            output_lines.append(l)
-            print(f"    {C.DIM}{l}{C.RESET}")
-            if '?' in l or 'use it' in l.lower():
+            ln = line.strip()
+            output_lines.append(ln)
+            print(f"    {C.DIM}{ln}{C.RESET}")
+            if '?' in ln or 'use it' in ln.lower():
                 frag_proc.stdin.write('y\n')
                 frag_proc.stdin.flush()
             # Detect .xor file creation
-            if 'Saving keystream' in l or '.xor' in l:
+            if 'Saving keystream' in ln or '.xor' in ln:
                 # Extract xor filename from line if present
-                m = re.search(r'(\S+\.xor)', l)
+                m = re.search(r'(\S+\.xor)', ln)
                 if m:
                     xor_file = m.group(1)
                     break
@@ -299,16 +298,16 @@ def _pipeline_chopchop(interface, bssid, channel, essid, cap_base) -> str | None
     xor_file = None
     try:
         for line in chop_proc.stdout:
-            l = line.strip()
-            print(f"    {C.DIM}{l}{C.RESET}")
-            if '?' in l or 'use this packet' in l.lower():
+            ln = line.strip()
+            print(f"    {C.DIM}{ln}{C.RESET}")
+            if '?' in ln or 'use this packet' in ln.lower():
                 chop_proc.stdin.write('y\n')
                 chop_proc.stdin.flush()
-            m = re.search(r'Saving chosen packet in (\S+)', l)
+            m = re.search(r'Saving chosen packet in (\S+)', ln)
             if m:
                 pass
-            if 'Saving keystream' in l or '.xor' in l:
-                m2 = re.search(r'(\S+\.xor)', l)
+            if 'Saving keystream' in ln or '.xor' in ln:
+                m2 = re.search(r'(\S+\.xor)', ln)
                 if m2:
                     xor_file = m2.group(1)
                     break
@@ -563,7 +562,7 @@ def _get_iv_count(csv_file: str, bssid: str) -> int:
     if not os.path.exists(csv_file):
         return 0
     try:
-        with open(csv_file, 'r', errors='replace') as f:
+        with open(csv_file, errors='replace') as f:
             in_ap = False
             for line in f:
                 stripped = line.strip()

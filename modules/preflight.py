@@ -10,18 +10,15 @@ import re
 import shutil
 import subprocess
 import sys
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from importlib import import_module
 from pathlib import Path
-from typing import Optional
 
 from rich import box
 from rich.console import Console
 from rich.panel import Panel
-from rich.progress import Progress, SpinnerColumn, TextColumn, BarColumn
+from rich.progress import BarColumn, Progress, SpinnerColumn, TextColumn
 from rich.table import Table
-
-from .exceptions import DependencyError
 
 console = Console()
 
@@ -71,7 +68,7 @@ PIP_PACKAGES: list[tuple[str, str, str]] = [
     ("openai",     "openai",     "neural"),
 ]
 
-TOOL_PACKAGES: dict[str, dict[str, Optional[str]]] = {
+TOOL_PACKAGES: dict[str, dict[str, str | None]] = {
     "airmon-ng":     {"apt": "aircrack-ng",  "pacman": "aircrack-ng",  "dnf": "aircrack-ng"},
     "airodump-ng":   {"apt": "aircrack-ng",  "pacman": "aircrack-ng",  "dnf": "aircrack-ng"},
     "aireplay-ng":   {"apt": "aircrack-ng",  "pacman": "aircrack-ng",  "dnf": "aircrack-ng"},
@@ -111,8 +108,8 @@ FEATURE_MAP: dict[str, list[str]] = {
 @dataclass
 class ToolStatus:
     name: str
-    path: Optional[str]
-    version: Optional[str]
+    path: str | None
+    version: str | None
     ok: bool
     required: bool
     category: str
@@ -126,12 +123,12 @@ class PipStatus:
     pip_name: str
     category: str
     ok: bool
-    version: Optional[str] = None
+    version: str | None = None
 
 
 # ─── Detection helpers ────────────────────────────────────────────────────────
 
-def _get_version(cmd_str: str, pattern: str) -> Optional[str]:
+def _get_version(cmd_str: str, pattern: str) -> str | None:
     try:
         result = subprocess.run(
             cmd_str, shell=True, capture_output=True, text=True, timeout=5

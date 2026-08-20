@@ -1,13 +1,12 @@
 """Tests for modules/neural.py — Neural Pathfinder."""
 from __future__ import annotations
 
-from unittest.mock import patch, MagicMock
-import pytest
-
 from modules.neural import (
-    AttackBrief, AttackStep,
-    _sanitize_scan_data, _rule_based_brief, _infer_risk_flags,
+    AttackBrief,
+    _infer_risk_flags,
     _parse_openai_response,
+    _rule_based_brief,
+    _sanitize_scan_data,
 )
 
 

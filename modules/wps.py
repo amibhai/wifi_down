@@ -22,10 +22,9 @@ import subprocess
 import threading
 import time
 from datetime import datetime
-from typing import Optional
 
 from modules import radio
-from modules.banner import C, info, success, warn, error, found, print_section
+from modules.banner import C, error, found, info, print_section, success, warn
 from modules.exceptions import DependencyError
 
 logger = logging.getLogger(__name__)
@@ -204,7 +203,7 @@ def detect_wps_capability(
 
 def wps_menu(
     interface: str,
-    target: Optional[dict],
+    target: dict | None,
 ) -> None:
     """Interactive WPS attack menu."""
     print_section("WPS Attack Module")
@@ -539,7 +538,7 @@ def _run_wps(
     cmd: list[str],
     bssid: str,
     ssid: str,
-    timeout: Optional[int] = 300,
+    timeout: int | None = 300,
     single_pin: bool = False,
 ) -> dict:
     """
@@ -687,7 +686,7 @@ def _valid_wps_pin(pin: str) -> bool:
 
 def _save_wps_result(
     bssid: str, ssid: str,
-    pin: Optional[str], psk: Optional[str],
+    pin: str | None, psk: str | None,
     mode: str,
 ) -> None:
     stamp = datetime.now().strftime("%Y%m%d_%H%M%S")

@@ -27,7 +27,6 @@ import os
 import shutil
 import subprocess
 from datetime import datetime
-from typing import Optional
 
 logger = logging.getLogger(__name__)
 
@@ -59,7 +58,7 @@ def essid_from_hex(h: str) -> str:
         return ""
 
 
-def parse_hc22000_line(line: str) -> Optional[dict]:
+def parse_hc22000_line(line: str) -> dict | None:
     """
     Parse one hashcat-22000 line into a structured record, or ``None`` if the
     line is not a valid WPA hash.
@@ -131,7 +130,7 @@ def summarize_hash_lines(lines) -> dict:
 def summarize_hash_file(hash_file: str) -> dict:
     """Read a 22000 file and summarise it (empty summary if unreadable)."""
     try:
-        with open(hash_file, "r", errors="replace") as fh:
+        with open(hash_file, errors="replace") as fh:
             return summarize_hash_lines(fh)
     except OSError:
         return summarize_hash_lines([])
@@ -247,7 +246,7 @@ def already_cracked(hash_file: str) -> dict:
         return {}
 
 
-def parse_hc22000_eapol(line: str) -> Optional[dict]:
+def parse_hc22000_eapol(line: str) -> dict | None:
     """
     Parse a type-02 (EAPOL / 4-way handshake) 22000 line into verifiable fields.
 
@@ -287,7 +286,7 @@ def load_hc22000_records(hash_file: str) -> list[dict]:
     """All verifiable records (PMKID *and* EAPOL) from a 22000 file."""
     records: list[dict] = []
     try:
-        with open(hash_file, "r", errors="replace") as fh:
+        with open(hash_file, errors="replace") as fh:
             for line in fh:
                 parts = line.strip().split("*")
                 if len(parts) < 2 or parts[0] != "WPA":
@@ -348,7 +347,7 @@ def crack_hc22000_pure(
         return None
     n = 0
     try:
-        with open(wordlist_file, "r", errors="replace") as wl:
+        with open(wordlist_file, errors="replace") as wl:
             for line in wl:
                 cand = line.rstrip("\r\n")
                 if not (8 <= len(cand) <= 63):
@@ -380,7 +379,7 @@ def _norm_mac(m: str) -> str:
 
 
 def _assemble_eapol_record(essid: str, ap_mac: str, sta_mac: str,
-                           m1_eapol: bytes, m2_eapol: bytes) -> Optional[dict]:
+                           m1_eapol: bytes, m2_eapol: bytes) -> dict | None:
     """
     Build a verifiable EAPOL record from the raw M1 and M2 EAPOL-Key frames.
 
@@ -415,8 +414,9 @@ def extract_handshakes_from_cap(cap_file: str, bssid: str | None = None,
     """
     try:
         from scapy.all import rdpcap
-        from scapy.layers.dot11 import Dot11, Dot11Beacon, Dot11ProbeResp, Dot11Elt
+        from scapy.layers.dot11 import Dot11, Dot11Beacon, Dot11Elt, Dot11ProbeResp
         from scapy.layers.eap import EAPOL
+
         from modules.eapol_monitor import classify_eapol
     except Exception:
         return []
@@ -490,7 +490,7 @@ def crack_cap_pure(cap_file: str, wordlist_file: str, bssid: str | None = None,
         return None
     n = 0
     try:
-        with open(wordlist_file, "r", errors="replace") as wl:
+        with open(wordlist_file, errors="replace") as wl:
             for line in wl:
                 cand = line.rstrip("\r\n")
                 if not (8 <= len(cand) <= 63):

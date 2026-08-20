@@ -6,7 +6,6 @@ import json
 import logging
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Optional
 
 logger = logging.getLogger(__name__)
 
@@ -73,9 +72,9 @@ def generate_report(
     wordlist_file= data.get("wordlist_file")
 
     # Extract result, duration, errors from events list or flat fields
-    key_found: Optional[str] = data.get("result")
+    key_found: str | None = data.get("result")
     errors:    list[str]     = []
-    duration_s: Optional[float] = data.get("duration_s")
+    duration_s: float | None = data.get("duration_s")
 
     for evt in data.get("events", []):
         if evt.get("event") == "key_found":

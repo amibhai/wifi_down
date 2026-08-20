@@ -22,7 +22,6 @@ import os
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
-from typing import Optional
 
 from modules import scanner
 
@@ -182,7 +181,7 @@ def recommend_strategies(target: dict) -> list[CrackStrategy]:
     return sorted(best.values(), key=lambda s: -s.score)
 
 
-def primary_strategy(target: dict) -> Optional[str]:
+def primary_strategy(target: dict) -> str | None:
     """The single best strategy name for *target*, or ``None`` if uncrackable."""
     ranked = recommend_strategies(target)
     return ranked[0].name if ranked else None
@@ -200,7 +199,7 @@ def describe_plan(strategies: list[CrackStrategy], top: int = 3) -> str:
 # Execution — turn a strategy into an actual wordlist file
 # ══════════════════════════════════════════════════════════════════════════════
 
-def _common_data_path() -> Optional[str]:
+def _common_data_path() -> str | None:
     """Path to the bundled breach-frequency common-password list, if present."""
     p = Path(__file__).resolve().parent.parent / "data" / "common_passwords.txt"
     return str(p) if p.is_file() else None
@@ -218,6 +217,7 @@ def _vendor_default_passwords(vendor: str, bssid: str) -> list[str]:
     last4 = bssid.replace(":", "").lower()[-4:] if bssid else ""
     try:
         import yaml
+
         from modules.oui import DEFAULTS_FILE
         with open(DEFAULTS_FILE, encoding="utf-8") as fh:
             data = yaml.safe_load(fh) or {}
@@ -237,7 +237,7 @@ def _vendor_default_passwords(vendor: str, bssid: str) -> list[str]:
     return [p for p in out if not (p in seen or seen.add(p))]
 
 
-def materialize_strategy(name: str, target: dict, out_dir: str = WORDLIST_DIR) -> Optional[str]:
+def materialize_strategy(name: str, target: dict, out_dir: str = WORDLIST_DIR) -> str | None:
     """
     Produce a concrete wordlist file for strategy *name* against *target*, or
     ``None`` when it cannot be auto-materialised (digit/mask brute-force and
@@ -305,7 +305,7 @@ def build_auto_wordlist(
     target: dict,
     out_dir: str = WORDLIST_DIR,
     max_lines: int = 2_000_000,
-) -> Optional[str]:
+) -> str | None:
     """
     Execute the full ranked plan into **one** WPA-valid, de-duplicated wordlist,
     ordered best-strategy-first (few high-probability candidates up front, the
@@ -335,7 +335,7 @@ def build_auto_wordlist(
             continue
         added = 0
         try:
-            with open(path, "r", errors="replace") as fh:
+            with open(path, errors="replace") as fh:
                 for line in fh:
                     w = line.strip()
                     if not w or w in seen or not (WPA_MIN <= len(w) <= WPA_MAX):
@@ -401,7 +401,7 @@ def masks_for_target(target: dict) -> list[str]:
     return [m for m in masks if not (m in seen or seen.add(m))]
 
 
-def materialize_masks(target: dict, out_dir: str = WORDLIST_DIR) -> Optional[str]:
+def materialize_masks(target: dict, out_dir: str = WORDLIST_DIR) -> str | None:
     """
     Write the target's masks to a hashcat ``.hcmask`` file (one mask per line)
     for ``hashcat -a 3 -m 22000 <hash> <file.hcmask>``. Returns the path, or

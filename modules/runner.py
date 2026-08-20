@@ -5,10 +5,10 @@ import logging
 import subprocess
 import time
 from collections.abc import Callable
-from typing import Optional
+
+from modules import radio
 
 from .exceptions import CaptureError, CrackError, DependencyError
-from modules import radio
 
 logger = logging.getLogger(__name__)
 
@@ -24,14 +24,14 @@ class SubprocessRunner:
         cmd: list[str],
         timeout: float = 60.0,
         retries: int = 0,
-        on_output_line: Optional[Callable[[str], None]] = None,
+        on_output_line: Callable[[str], None] | None = None,
     ) -> subprocess.CompletedProcess:
         """
         Run *cmd*, retrying up to *retries* times with exponential backoff.
         Every call is logged at DEBUG with full argv + pid.
         """
         attempt = 0
-        last_exc: Optional[Exception] = None
+        last_exc: Exception | None = None
 
         while attempt <= retries:
             if attempt > 0:
@@ -83,7 +83,7 @@ class SubprocessRunner:
         self,
         cmd: list[str],
         timeout: float = 300.0,
-        on_output_line: Optional[Callable[[str], None]] = None,
+        on_output_line: Callable[[str], None] | None = None,
     ) -> int:
         """
         Stream *cmd* stdout line-by-line through *on_output_line*.

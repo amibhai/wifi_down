@@ -16,8 +16,9 @@ import shutil
 import subprocess
 import time
 from datetime import datetime
+
 from modules import radio
-from modules.banner import C, info, success, warn, error, found, print_section
+from modules.banner import C, error, found, info, print_section, success, warn
 
 RESULTS_DIR = "results"
 os.makedirs(RESULTS_DIR, exist_ok=True)
@@ -462,7 +463,7 @@ def _convert_cap_to_hc22000(cap_file: str) -> str | None:
         success(f"Converted: {out}")
         return out
     # hcxpcapngtool succeeded but produced empty file → no EAPOL in cap
-    warn(f"hcxpcapngtool output empty — cap may lack a complete EAPOL exchange.")
+    warn("hcxpcapngtool output empty — cap may lack a complete EAPOL exchange.")
     warn("Stderr: " + result.stderr.strip()[:200])
     return None
 

@@ -2,7 +2,6 @@
 from __future__ import annotations
 
 from unittest.mock import patch
-import pytest
 
 
 class TestPhantomBasic:
@@ -19,7 +18,7 @@ class TestPhantomConfig:
     """Test hostapd/dnsmasq config file generation."""
 
     def test_hostapd_conf_mirror(self) -> None:
-        from modules.phantom import _write_hostapd_conf, PERSONALITY_MIRROR
+        from modules.phantom import PERSONALITY_MIRROR, _write_hostapd_conf
         p = _write_hostapd_conf("wlan0", "TestSSID", 6, PERSONALITY_MIRROR)
         try:
             content = p.read_text()
@@ -30,7 +29,7 @@ class TestPhantomConfig:
             p.unlink(missing_ok=True)
 
     def test_hostapd_conf_upgrade_adds_wpa3(self) -> None:
-        from modules.phantom import _write_hostapd_conf, PERSONALITY_UPGRADE
+        from modules.phantom import PERSONALITY_UPGRADE, _write_hostapd_conf
         p = _write_hostapd_conf("wlan0", "TestSSID", 6, PERSONALITY_UPGRADE)
         try:
             content = p.read_text()

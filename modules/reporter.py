@@ -14,7 +14,6 @@ import json
 import os
 from datetime import datetime, timezone
 
-
 _TEMPLATE_HTML = """<!DOCTYPE html>
 <html lang="en">
 <head>

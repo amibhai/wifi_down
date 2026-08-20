@@ -23,9 +23,9 @@ from __future__ import annotations
 
 import hashlib
 import hmac
-from typing import Iterable, Optional, Union
+from collections.abc import Iterable
 
-BytesLike = Union[bytes, str]
+BytesLike = bytes | str
 
 # EAPOL key-descriptor MIC field: 16 bytes at offset 81 of the 802.1X frame.
 MIC_OFFSET = 81
@@ -99,8 +99,8 @@ def compute_mic(kck_bytes: bytes, eapol_frame: bytes, key_version: int = 2) -> b
 
 
 def _aes_cmac(key: bytes, data: bytes) -> bytes:  # pragma: no cover - optional dep
-    from cryptography.hazmat.primitives.cmac import CMAC
     from cryptography.hazmat.primitives.ciphers import algorithms
+    from cryptography.hazmat.primitives.cmac import CMAC
     c = CMAC(algorithms.AES(key))
     c.update(data)
     return c.finalize()
@@ -180,7 +180,7 @@ def verify_pmkid(passphrase: str, ssid: str, ap_mac: BytesLike, sta_mac: BytesLi
 
 def crack_pmkid(ssid: str, ap_mac: BytesLike, sta_mac: BytesLike,
                 expected_pmkid: BytesLike, wordlist: Iterable[str],
-                progress: Optional[callable] = None) -> Optional[str]:
+                progress: callable | None = None) -> str | None:
     """
     Run *wordlist* against a captured PMKID entirely in Python. Returns the
     passphrase on success, else ``None``. ``progress(n)`` is called every 1000
@@ -203,7 +203,7 @@ def crack_pmkid(ssid: str, ap_mac: BytesLike, sta_mac: BytesLike,
 def crack_eapol(ssid: str, ap_mac: BytesLike, sta_mac: BytesLike,
                 anonce: BytesLike, snonce: BytesLike, eapol_frame_mic_zeroed: bytes,
                 expected_mic: BytesLike, wordlist: Iterable[str],
-                key_version: int = 2, progress: Optional[callable] = None) -> Optional[str]:
+                key_version: int = 2, progress: callable | None = None) -> str | None:
     """Run *wordlist* against a captured 4-way MIC in pure Python."""
     n = 0
     for candidate in wordlist:

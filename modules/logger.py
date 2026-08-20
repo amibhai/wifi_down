@@ -18,7 +18,6 @@ import os
 import time
 from datetime import datetime, timezone
 
-
 _LOG_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "results")
 
 

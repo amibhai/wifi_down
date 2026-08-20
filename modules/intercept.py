@@ -18,8 +18,6 @@ from __future__ import annotations
 
 import json
 import logging
-import os
-import re
 import subprocess
 import tempfile
 import threading
@@ -27,12 +25,12 @@ import time
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
-from typing import Optional
 
 from rich import box
 from rich.console import Console
 from rich.panel import Panel
 from rich.table import Table
+
 from modules import radio
 
 logger = logging.getLogger(__name__)
@@ -103,7 +101,7 @@ def _write_bettercap_caplet(iface: str) -> Path:
 
 # ─── Event parser ─────────────────────────────────────────────────────────────
 
-def _parse_bettercap_line(line: str) -> Optional[InterceptFinding]:
+def _parse_bettercap_line(line: str) -> InterceptFinding | None:
     """Parse a single bettercap JSON event line into an InterceptFinding."""
     if not line.strip():
         return None

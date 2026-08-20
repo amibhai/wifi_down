@@ -2,7 +2,6 @@
 from __future__ import annotations
 
 import sys
-import tempfile
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
@@ -32,7 +31,7 @@ def _fake_csv_response(rows: list[tuple[str, str]]) -> str:
 # ── refresh_database ──────────────────────────────────────────────────────────
 
 def test_refresh_database_inserts_vendors():
-    from modules.oui import refresh_database, get_vendor
+    from modules.oui import refresh_database
 
     csv_content = _fake_csv_response([
         ("AABBCC", "TP-Link Technologies"),
@@ -49,7 +48,7 @@ def test_refresh_database_inserts_vendors():
 
 
 def test_get_vendor_returns_correct_name():
-    from modules.oui import refresh_database, get_vendor
+    from modules.oui import get_vendor, refresh_database
 
     csv_content = _fake_csv_response([("AABBCC", "TP-Link Technologies")])
     mock_resp = MagicMock()
@@ -64,7 +63,7 @@ def test_get_vendor_returns_correct_name():
 
 
 def test_get_vendor_unknown_bssid_returns_none():
-    from modules.oui import refresh_database, get_vendor
+    from modules.oui import get_vendor, refresh_database
 
     csv_content = _fake_csv_response([("AABBCC", "TP-Link Technologies")])
     mock_resp = MagicMock()
@@ -89,7 +88,7 @@ def test_refresh_database_returns_false_on_network_error():
 # ── get_vendor_wordlist ────────────────────────────────────────────────────────
 
 def test_get_vendor_wordlist_returns_defaults_for_tplink(tmp_path):
-    from modules.oui import refresh_database, get_vendor_wordlist
+    from modules.oui import get_vendor_wordlist, refresh_database
 
     csv_content = _fake_csv_response([("AABBCC", "TP-Link Technologies")])
     mock_resp = MagicMock()
@@ -106,7 +105,7 @@ def test_get_vendor_wordlist_returns_defaults_for_tplink(tmp_path):
 
 
 def test_get_vendor_wordlist_substitutes_last4mac(tmp_path):
-    from modules.oui import refresh_database, get_vendor_wordlist
+    from modules.oui import get_vendor_wordlist, refresh_database
 
     csv_content = _fake_csv_response([("AABBCC", "TP-Link Technologies")])
     mock_resp = MagicMock()
@@ -122,7 +121,7 @@ def test_get_vendor_wordlist_substitutes_last4mac(tmp_path):
 
 
 def test_get_vendor_wordlist_empty_for_unknown_vendor():
-    from modules.oui import refresh_database, get_vendor_wordlist
+    from modules.oui import get_vendor_wordlist, refresh_database
 
     csv_content = _fake_csv_response([("AABBCC", "Unknown Corp XYZ")])
     mock_resp = MagicMock()

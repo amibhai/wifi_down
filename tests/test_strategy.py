@@ -9,10 +9,19 @@ from __future__ import annotations
 
 from modules import strategy
 from modules.strategy import (
-    recommend_strategies, primary_strategy, vendor_has_temporal_algo,
+    S_COMMON,
+    S_CUPP_PERSONAL,
+    S_DIGIT_MASKS,
+    S_ISP_PATTERNS,
+    S_MASK_BRUTEFORCE,
+    S_PHONE_NUMBERS,
+    S_RULE_BASED,
+    S_TEMPORAL_PSK,
+    S_VENDOR_DEFAULTS,
     describe_plan,
-    S_VENDOR_DEFAULTS, S_TEMPORAL_PSK, S_ISP_PATTERNS, S_PHONE_NUMBERS,
-    S_DIGIT_MASKS, S_CUPP_PERSONAL, S_COMMON, S_RULE_BASED, S_MASK_BRUTEFORCE,
+    primary_strategy,
+    recommend_strategies,
+    vendor_has_temporal_algo,
 )
 
 

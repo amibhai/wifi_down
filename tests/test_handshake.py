@@ -19,45 +19,37 @@ Tests every critical path of the rewritten capture engine:
 from __future__ import annotations
 
 import os
-import subprocess
 import tempfile
 import time
 from unittest import mock
 
 import pytest
 
+# Backward-compat alias imports
 from modules.handshake import (
     WifiClient,
     _cap_size,
+    _channel_to_freq,
+    _detect_hcxdumptool_version,
     _find_cap,
+    _find_cap_file,
     _find_csv,
+    _find_csv_file,
     _is_alive,
     _kill,
+    _parse_airodump_csv,
     _parse_clients,
+    _parse_clients_from_csv,
     _rm,
+    _save,
     _set_channel,
-    _channel_to_freq,
-    _start_deauth,
     _verify,
     _verify_aircrack,
     _verify_channel,
     _verify_tshark,
-    _detect_hcxdumptool_version,
-    _pmkid,
-    _save,
-    _kill_interfering,
     capture_handshake,
     verify_handshake,
 )
-
-# Backward-compat alias imports
-from modules.handshake import (
-    _find_cap_file,
-    _find_csv_file,
-    _parse_clients_from_csv,
-    _parse_airodump_csv,
-)
-
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # Fixtures

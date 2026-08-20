@@ -1,12 +1,7 @@
 """Tests for modules/i18n.py — internationalization."""
 from __future__ import annotations
 
-import json
-from pathlib import Path
-from unittest.mock import patch
-import pytest
-
-from modules.i18n import t, init, active_lang
+from modules.i18n import active_lang, init, t
 
 
 class TestI18nFallback:
@@ -36,15 +31,13 @@ class TestI18nFallback:
         assert len(result) > 0
 
     def test_spanish_locale(self) -> None:
-        init("es")
-        result = t("menu.scan")
-        # Spanish translation should be different from English
         init("en")
         en_result = t("menu.scan")
         init("es")
         es_result = t("menu.scan")
         # Both should be non-empty strings
         assert len(es_result) > 0
+        assert len(en_result) > 0
         assert isinstance(es_result, str)
 
     def test_active_lang_reflects_init(self) -> None:

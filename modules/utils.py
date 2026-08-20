@@ -14,11 +14,10 @@ import shutil
 import subprocess
 import sys
 from pathlib import Path
-from typing import Optional
 
 from rich.logging import RichHandler
 
-from modules.banner import C, info, success, warn, error
+from modules.banner import error, info, success, warn
 
 # ─── Paths ────────────────────────────────────────────────────────────────────
 
@@ -80,9 +79,9 @@ def setup_logging(level: int = logging.DEBUG) -> logging.Logger:
 
 def emit_session_summary(
     session_id: str,
-    target: Optional[str],
+    target: str | None,
     stage_reached: str,
-    result: Optional[str],
+    result: str | None,
     duration_s: float,
     errors: list[str],
 ) -> None:
@@ -161,12 +160,14 @@ def run(cmd: list, capture: bool = True, timeout: int = 30) -> subprocess.Comple
 # Interface management
 ###############################################################################
 
-# Robust implementations live in modules/interface.py.
-# enable_monitor_mode raises RuntimeError (with full stdout/stderr) on failure.
-from modules.interface import (  # noqa: E402
-    kill_interfering_processes,
-    enable_monitor_mode,
+# Robust implementations live in modules/interface.py — re-exported here so the
+# rest of the tool imports them from the utils facade. Late (post-def) import
+# avoids a circular import with modules.interface, hence E402; the names are an
+# intentional re-export, hence F401.
+from modules.interface import (  # noqa: E402, F401
     disable_monitor_mode,
+    enable_monitor_mode,
+    kill_interfering_processes,
 )
 
 

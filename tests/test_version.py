@@ -17,8 +17,9 @@ def test_version_semver_format():
 
 def test_version_matches_pyproject():
     """Ensure __version__ matches the version field in pyproject.toml."""
-    import tomllib
     import pathlib
+
+    import tomllib
 
     pyproject = pathlib.Path(__file__).parent.parent / "pyproject.toml"
     with open(pyproject, "rb") as f:

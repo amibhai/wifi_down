@@ -12,10 +12,9 @@ import re
 import subprocess
 import tempfile
 import time
-from typing import Optional
 
 from modules import radio
-from modules.banner import C, info, success, warn, error, print_section
+from modules.banner import C, error, info, print_section, success, warn
 
 logger = logging.getLogger(__name__)
 
@@ -170,7 +169,6 @@ def classify_security(net: dict) -> dict:
     """
     privacy = net.get("privacy", "").upper()
     auth    = net.get("auth",    "").upper()
-    cipher  = net.get("cipher",  "").upper()
 
     has_wpa3 = "WPA3" in privacy or "SAE" in auth
     has_wpa2 = "WPA2" in privacy
@@ -325,7 +323,7 @@ def _parse_csv(filepath: str) -> list[dict]:
         return []
 
     try:
-        with open(filepath, "r", errors="replace") as f:
+        with open(filepath, errors="replace") as f:
             content = f.read()
     except OSError:
         return []
@@ -498,7 +496,7 @@ def _print_network_table(networks: list[dict], caption: str = "") -> None:
 # Network selection
 ###############################################################################
 
-def select_network(networks: list[dict]) -> Optional[dict]:
+def select_network(networks: list[dict]) -> dict | None:
     """Prompt the user to select a target AP from the scanned list."""
     if not networks:
         error("No networks to select from.")

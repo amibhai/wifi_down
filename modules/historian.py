@@ -19,16 +19,13 @@ import logging
 import statistics
 import threading
 import time
-from collections import defaultdict
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
-from typing import Callable, Optional
 
-from rich import box
 from rich.console import Console
 from rich.panel import Panel
-from rich.table import Table
 
 logger = logging.getLogger(__name__)
 console = Console()
@@ -125,8 +122,8 @@ class BeaconHistorian:
         target_ssid: str,
         target_bssid: str,
         duration: int = 60,
-        on_beacon: Optional[Callable[[BeaconSample], None]] = None,
-        on_probe:  Optional[Callable[[ProbeRequest], None]] = None,
+        on_beacon: Callable[[BeaconSample], None] | None = None,
+        on_probe:  Callable[[ProbeRequest], None] | None = None,
     ) -> None:
         self.interface    = interface
         self.target_ssid  = target_ssid.lower()
@@ -144,10 +141,9 @@ class BeaconHistorian:
 
     def _handle_packet(self, pkt: object) -> None:
         try:
-            from scapy.layers.dot11 import (
-                Dot11, Dot11Beacon, Dot11ProbeReq, Dot11Elt, RadioTap
-            )
             import hashlib
+
+            from scapy.layers.dot11 import Dot11, Dot11Beacon, Dot11Elt, Dot11ProbeReq, RadioTap
 
             if not pkt.haslayer(Dot11):
                 return
@@ -160,15 +156,12 @@ class BeaconHistorian:
                 if bssid != self.target_bssid:
                     return
 
-                ssid = ""
                 beacon_interval = 100
                 ies_raw = b""
                 channel = 0
 
                 elt = pkt.getlayer(Dot11Elt)
                 while elt:
-                    if elt.ID == 0 and isinstance(elt.info, (bytes, bytearray)):
-                        ssid = elt.info.decode(errors="replace")
                     ies_raw += bytes(elt)
                     elt = elt.payload.getlayer(Dot11Elt) if elt.payload else None
 
@@ -387,7 +380,7 @@ def display_profile(profile: NetworkBehavioralProfile) -> None:
             console.print(f"  • [cyan]{p.src_mac}[/cyan]{vendor_tag}")
 
     if profile.wordlist_seeds:
-        console.print(f"\n  [dim]Vendor seeds added to wordlist strategy 11:[/dim]")
+        console.print("\n  [dim]Vendor seeds added to wordlist strategy 11:[/dim]")
         console.print(f"  [dim]{', '.join(profile.wordlist_seeds)}[/dim]")
 
     console.print()
@@ -397,8 +390,8 @@ def display_profile(profile: NetworkBehavioralProfile) -> None:
 
 def historian_menu(
     interface: str,
-    target: Optional[dict],
-) -> Optional[NetworkBehavioralProfile]:
+    target: dict | None,
+) -> NetworkBehavioralProfile | None:
     """Interactive Beacon Historian launcher. Passive — no frame injection."""
     console.print()
     console.print(Panel(

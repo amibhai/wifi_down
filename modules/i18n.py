@@ -12,7 +12,6 @@ import locale
 import logging
 import os
 from pathlib import Path
-from typing import Optional
 
 logger = logging.getLogger(__name__)
 
@@ -63,7 +62,7 @@ def _detect_system_lang() -> str:
     return _FALLBACK_LANG
 
 
-def init(lang: Optional[str] = None) -> None:
+def init(lang: str | None = None) -> None:
     """
     Initialize i18n with the given language code.
     Call once at startup (CLI does this via --lang flag or auto-detection).

@@ -15,7 +15,6 @@ from unittest import mock
 
 import pytest
 
-
 # ── cracker: hashcat result comes from the --outfile, not the potfile ────────
 
 def test_hashcat_result_reads_outfile(tmp_path: Path):

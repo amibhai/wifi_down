@@ -3,13 +3,16 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass, field
-from typing import Optional
 
 logger = logging.getLogger(__name__)
 
 try:
     from scapy.all import (  # type: ignore[import]
-        Dot11, Dot11Beacon, Dot11Elt, Dot11ProbeResp, sniff,
+        Dot11,
+        Dot11Beacon,
+        Dot11Elt,
+        Dot11ProbeResp,
+        sniff,
     )
     SCAPY_AVAILABLE = True
 except ImportError:
@@ -49,7 +52,7 @@ class DeviceFingerprint:
     ht_capable: bool = False
     vht_capable: bool = False
     he_capable: bool = False
-    country_code: Optional[str] = None
+    country_code: str | None = None
     device_type: str = "Unknown"
     frame_count: int = 0
 

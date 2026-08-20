@@ -19,7 +19,6 @@ import logging
 import textwrap
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Optional
 
 logger = logging.getLogger(__name__)
 
@@ -77,14 +76,21 @@ def _generate_with_reportlab(
     out_path: Path,
 ) -> None:
     from reportlab.lib import colors
+    from reportlab.lib.enums import TA_CENTER
     from reportlab.lib.pagesizes import A4
-    from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
-    from reportlab.lib.units import cm, mm
+    from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
+    from reportlab.lib.units import cm
     from reportlab.platypus import (
-        SimpleDocTemplate, Paragraph, Spacer, Table as RLTable,
-        TableStyle, HRFlowable, PageBreak,
+        HRFlowable,
+        PageBreak,
+        Paragraph,
+        SimpleDocTemplate,
+        Spacer,
+        TableStyle,
     )
-    from reportlab.lib.enums import TA_CENTER, TA_LEFT
+    from reportlab.platypus import (
+        Table as RLTable,
+    )
 
     TEAL  = colors.HexColor(_TEAL_HEX)
     DARK  = colors.HexColor("#1a1a1a")
@@ -375,9 +381,9 @@ def _generate_with_weasyprint(
 def generate_pdf_report(
     session_id: str,
     out_dir: Path = REPORTS_DIR,
-    ghost_report: Optional[object] = None,
-    intercept_findings: Optional[list[dict]] = None,
-) -> Optional[Path]:
+    ghost_report: object | None = None,
+    intercept_findings: list[dict] | None = None,
+) -> Path | None:
     """
     Generate a PDF pentest report for *session_id*.
     Returns the PDF path on success, None if no PDF engine is available.

@@ -28,7 +28,8 @@ import re
 import shutil
 import subprocess
 from datetime import date
-from modules.banner import C, info, success, warn, error, print_section
+
+from modules.banner import C, error, info, print_section, success, warn
 
 try:
     from tqdm import tqdm as _tqdm
@@ -182,11 +183,11 @@ def _dedup_against_existing(new_path: str, existing_path: str) -> int:
     if not os.path.exists(existing_path):
         return 0
     existing: set[str] = set()
-    with open(existing_path, 'r', errors='replace') as f:
-        existing.update(l.strip() for l in f if l.strip())
+    with open(existing_path, errors='replace') as f:
+        existing.update(ln.strip() for ln in f if ln.strip())
     keep: list[str] = []
     removed = 0
-    with open(new_path, 'r', errors='replace') as f:
+    with open(new_path, errors='replace') as f:
         for line in f:
             w = line.strip()
             if w in existing:
@@ -250,11 +251,11 @@ def gen_common(out: str, rockyou_path: str = '') -> int:
     builtin = os.path.join(os.path.dirname(__file__), '..', 'data', 'common_passwords.txt')
     if os.path.exists(builtin):
         with open(builtin) as f:
-            words.update(l.strip() for l in f if l.strip())
+            words.update(ln.strip() for ln in f if ln.strip())
         info(f"Loaded {len(words):,} built-in common passwords.")
     if rockyou_path and os.path.exists(rockyou_path):
         info(f"Loading rockyou.txt from {rockyou_path}...")
-        with open(rockyou_path, 'r', errors='replace') as f:
+        with open(rockyou_path, errors='replace') as f:
             for line in f:
                 w = line.strip()
                 if WPA_MIN <= len(w) <= WPA_MAX:
@@ -263,7 +264,7 @@ def gen_common(out: str, rockyou_path: str = '') -> int:
         for p in ['/usr/share/wordlists/rockyou.txt']:
             if os.path.exists(p):
                 info(f"Found rockyou.txt at {p}")
-                with open(p, 'r', errors='replace') as f:
+                with open(p, errors='replace') as f:
                     for line in f:
                         w = line.strip()
                         if WPA_MIN <= len(w) <= WPA_MAX:
@@ -347,7 +348,7 @@ def _gen_personal_candidates(
     all_years = year_tokens + year_short_tokens  # full first, short second
 
     # ── Family 1: name + separator + year  (THE KEY BUG FIX) ─────────────────
-    
+
     for tok in word_tokens:
         for yr in year_tokens:
             for sep, _ in _P4_SEPS:
@@ -637,7 +638,7 @@ def gen_combine(files: list[str], out: str) -> int:
             if not os.path.exists(path):
                 warn(f"  File not found: {path}")
                 continue
-            with open(path, 'r', errors='replace') as fin:
+            with open(path, errors='replace') as fin:
                 for line in fin:
                     w = line.strip()
                     if WPA_MIN <= len(w) <= WPA_MAX and w not in seen:
@@ -683,7 +684,7 @@ def gen_pattern(out_dir: str = WORDLIST_DIR, fields: dict | None = None) -> str 
     Strategy 13 — delegate to the pattern_engine interactive menu.
     Auto-populates context from the last personal-info session if available.
     """
-    from modules.pattern_engine import build_context, pattern_menu, PatternContext
+    from modules.pattern_engine import PatternContext, build_context, pattern_menu
 
     ctx: PatternContext
     src = fields or _last_personal_fields
@@ -806,7 +807,7 @@ def gen_scenario(out: str, fields: dict | None = None) -> int:
     # Custom scenario → delegate to pattern_engine
     if choice == '5':
         src = fields or _last_personal_fields
-        from modules.pattern_engine import build_context, pattern_menu, PatternContext
+        from modules.pattern_engine import PatternContext, build_context, pattern_menu
         ctx = build_context(src) if src else PatternContext()
         result = pattern_menu(ctx, WORDLIST_DIR)
         return 1 if result else 0

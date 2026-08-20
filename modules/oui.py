@@ -7,7 +7,6 @@ import logging
 import sqlite3
 import time
 from pathlib import Path
-from typing import Optional
 
 logger = logging.getLogger(__name__)
 
@@ -84,7 +83,7 @@ def refresh_database(force: bool = False) -> bool:
 
 # ─── Public API ───────────────────────────────────────────────────────────────
 
-def get_vendor(bssid: str) -> Optional[str]:
+def get_vendor(bssid: str) -> str | None:
     """Return the IEEE-registered vendor name for the given BSSID, or None."""
     if _needs_refresh():
         refresh_database()

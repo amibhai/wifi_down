@@ -1,7 +1,6 @@
 """Tests for modules/preflight.py — pre-flight dependency checks."""
 from __future__ import annotations
 
-import subprocess
 import sys
 from pathlib import Path
 from unittest.mock import MagicMock, patch
@@ -11,14 +10,11 @@ import pytest
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from modules.preflight import (
-    ToolStatus,
     _check_tool,
-    _check_monitor_mode,
-    _get_wireless_interfaces,
     _get_version,
+    _get_wireless_interfaces,
     run_preflight,
 )
-
 
 # ── _get_version ─────────────────────────────────────────────────────────────
 

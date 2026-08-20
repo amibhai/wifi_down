@@ -19,7 +19,6 @@ import logging
 import os
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Optional
 
 from rich import box
 from rich.console import Console
@@ -69,7 +68,7 @@ class AttackBrief:
 
 # ─── API key management ───────────────────────────────────────────────────────
 
-def _load_api_key() -> Optional[str]:
+def _load_api_key() -> str | None:
     if NEURAL_CONF.exists():
         try:
             data = json.loads(NEURAL_CONF.read_text())
@@ -86,7 +85,7 @@ def _save_api_key(key: str) -> None:
     logger.info("Neural Pathfinder: API key stored at %s", NEURAL_CONF)
 
 
-def _prompt_for_api_key() -> Optional[str]:
+def _prompt_for_api_key() -> str | None:
     console.print()
     console.print(Panel(
         "[bold #00D4AA]NEURAL PATHFINDER — API Key Setup[/bold #00D4AA]\n\n"
@@ -317,7 +316,7 @@ def display_attack_brief(brief: AttackBrief) -> None:
     ))
 
     if brief.executive_summary:
-        console.print(f"\n  [bold white]Summary:[/bold white]")
+        console.print("\n  [bold white]Summary:[/bold white]")
         console.print(f"  {brief.executive_summary}\n")
 
     if brief.recommended_path:
@@ -346,12 +345,12 @@ def display_attack_brief(brief: AttackBrief) -> None:
         console.print(t)
 
     if brief.wordlist_hints:
-        console.print(f"\n  [bold]Wordlist seeds (add to custom strategy):[/bold]")
+        console.print("\n  [bold]Wordlist seeds (add to custom strategy):[/bold]")
         for hint in brief.wordlist_hints:
             console.print(f"  + [cyan]{hint}[/cyan]")
 
     if brief.risk_flags:
-        console.print(f"\n  [bold yellow]Risk flags:[/bold yellow]")
+        console.print("\n  [bold yellow]Risk flags:[/bold yellow]")
         for flag in brief.risk_flags:
             console.print(f"  ⚠  [yellow]{flag}[/yellow]")
 
@@ -363,7 +362,7 @@ def display_attack_brief(brief: AttackBrief) -> None:
 def neural_menu(
     networks: list[dict],
     openai_model: str = "gpt-4o-mini",
-) -> Optional[AttackBrief]:
+) -> AttackBrief | None:
     """Interactive Neural Pathfinder launcher."""
     console.print()
     console.print(Panel(

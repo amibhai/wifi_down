@@ -25,8 +25,8 @@ from __future__ import annotations
 import itertools
 import json
 import re
+from collections.abc import Iterator
 from pathlib import Path
-from typing import Iterator
 
 # ── Constant pools ────────────────────────────────────────────────────────────
 
@@ -310,9 +310,10 @@ def pattern_menu(
     Interactive custom pattern builder.
     Returns path to generated wordlist, or None if cancelled.
     """
-    from modules.banner import C, info, success, warn, error
     import os
     from datetime import datetime
+
+    from modules.banner import C, info, success, warn
 
     WPA_MIN, WPA_MAX = 8, 63
 
@@ -335,7 +336,7 @@ def pattern_menu(
     if saved:
         print(f"\n  {C.DIM}Saved patterns ({len(saved)}): "
               + "  ".join(saved[:6])
-              + (f"  …" if len(saved) > 6 else "") + f"{C.RESET}")
+              + ("  …" if len(saved) > 6 else "") + f"{C.RESET}")
 
     raw = input(
         f"\n  {C.YELLOW}Pattern(s) — space/comma-separated "
@@ -350,7 +351,7 @@ def pattern_menu(
         if not saved:
             warn("No saved patterns yet.")
             return None
-        print(f"\n  Saved patterns:")
+        print("\n  Saved patterns:")
         for i, p in enumerate(saved, 1):
             cnt = estimate_count(p, ctx)
             print(f"    [{i:2d}] {p:30s}  ≈ {cnt:,}")

@@ -18,7 +18,6 @@ from __future__ import annotations
 import re
 import shutil
 import subprocess
-from typing import Optional
 
 from rich.console import Console
 
@@ -65,7 +64,7 @@ def kill_interfering_processes() -> bool:
 
 # ─── Parsing / verification (kept for API + test compatibility) ───────────────
 
-def parse_new_interface_from_output(output: str, original: str) -> Optional[str]:
+def parse_new_interface_from_output(output: str, original: str) -> str | None:
     """Parse the new monitor interface name from airmon-ng start output."""
     return radio.parse_airmon_new_iface(output, original)
 

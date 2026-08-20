@@ -12,7 +12,6 @@ from __future__ import annotations
 
 from modules import wpacrypto as wc
 
-
 # The two canonical IEEE 802.11i passphrase→PMK vectors.
 PMK_VECTORS = [
     ("password", "IEEE",

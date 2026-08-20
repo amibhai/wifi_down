@@ -1,16 +1,18 @@
 """Unit tests for modules/eapol_monitor.py — pure logic, zero RF required."""
 from __future__ import annotations
 
-import pytest
-
 from modules.eapol_monitor import (
-    classify_eapol,
-    is_crackable,
-    pmkid_from_m1,
-    client_from_data_frame,
+    KI_ACK,
+    KI_INSTALL,
+    KI_MIC,
+    KI_PAIRWISE,
+    KI_SECURE,
     _is_station_mac,
     _parse_station_csv,
-    KI_ACK, KI_MIC, KI_INSTALL, KI_SECURE, KI_PAIRWISE,
+    classify_eapol,
+    client_from_data_frame,
+    is_crackable,
+    pmkid_from_m1,
 )
 
 # Canonical Key Information values for the four handshake messages

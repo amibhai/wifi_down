@@ -10,9 +10,6 @@ from __future__ import annotations
 
 from unittest import mock
 
-import pytest
-
-
 # ── WEP: "crack existing .cap" (mode 4) reaches the real cracker ─────────────
 
 def test_wep_menu_mode4_uses_real_cracker():

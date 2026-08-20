@@ -1,6 +1,5 @@
 """Smoke tests for modules/banner.py — ensures banner renders without exception."""
 import io
-import sys
 import unittest
 from unittest.mock import patch
 
@@ -104,4 +103,4 @@ class TestBannerOutput:
 
 if __name__ == "__main__":
     unittest.main()
-# 
+#

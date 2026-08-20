@@ -3,7 +3,6 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass, field
-from typing import Optional
 
 from rich import box
 from rich.console import Console
@@ -48,8 +47,7 @@ class AttackSequencer:
         wps_enabled: bool = bool(ap_info.get("wps_enabled", False))
         wps_locked: bool  = bool(ap_info.get("wps_locked",  False))
         wps_version: str  = ap_info.get("wps_version", "")
-        vendor: Optional[str] = ap_info.get("vendor")
-        ssid_tag: str = ap_info.get("ssid_tag", "")
+        vendor: str | None = ap_info.get("vendor")
 
         plan = AttackPlan(target_bssid=bssid, target_ssid=ssid)
         steps: list[AttackStep] = []

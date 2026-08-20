@@ -2,11 +2,12 @@
 from __future__ import annotations
 
 import time
-from unittest.mock import patch, MagicMock
-import pytest
+from unittest.mock import patch
 
 from modules.historian import (
-    BeaconHistorian, BeaconSample, NetworkBehavioralProfile, Anomaly,
+    BeaconHistorian,
+    BeaconSample,
+    NetworkBehavioralProfile,
 )
 
 
@@ -103,7 +104,6 @@ class TestBeaconHistorianProfile:
         for _ in range(5):
             # Manually invoke probe logic via _handle_packet is complex;
             # just verify the data structure allows dedup
-            from modules.historian import ProbeRequest
             known = {p.src_mac for p in h._probes}
             if mac not in known:
                 h._probes.append(ProbeRequest(
@@ -124,7 +124,6 @@ class TestHistorianMissingDep:
             target_bssid="AA:BB:CC:DD:EE:FF",
             duration=1,
         )
-        import sys
         with patch.dict("sys.modules", {"scapy": None, "scapy.all": None}):
             profile = h._empty_profile()
         assert profile.beacon_count == 0

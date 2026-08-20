@@ -12,9 +12,18 @@ import pytest
 
 from modules import scanner
 from modules.scanner import (
-    classify_security, is_dictionary_crackable, enrich_network,
-    SEC_WPA3_SAE, SEC_WPA3_TRANS, SEC_WPA3_ENT, SEC_WPA2, SEC_WPA2_ENT,
-    SEC_WPA, SEC_OWE, SEC_WEP, SEC_OPEN,
+    SEC_OPEN,
+    SEC_OWE,
+    SEC_WEP,
+    SEC_WPA,
+    SEC_WPA2,
+    SEC_WPA2_ENT,
+    SEC_WPA3_ENT,
+    SEC_WPA3_SAE,
+    SEC_WPA3_TRANS,
+    classify_security,
+    enrich_network,
+    is_dictionary_crackable,
 )
 
 

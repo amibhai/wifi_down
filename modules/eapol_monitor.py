@@ -30,16 +30,16 @@ import subprocess
 import threading
 import time
 from dataclasses import dataclass, field
-from typing import Dict, List, Optional, Set
+
 from modules import radio
 
 logger = logging.getLogger(__name__)
 
 # ─── Optional scapy import (required dep, but degrade gracefully) ─────────────
 try:
-    from scapy.sendrecv import AsyncSniffer
     from scapy.layers.dot11 import Dot11, RadioTap
     from scapy.layers.eap import EAPOL
+    from scapy.sendrecv import AsyncSniffer
     _SCAPY_OK = True
 except Exception as _exc:  # pragma: no cover - only when scapy truly absent
     AsyncSniffer = None  # type: ignore
@@ -88,7 +88,7 @@ def classify_eapol(key_info: int, from_ds: bool = False, key_data_len: int = 0) 
     return 0
 
 
-def is_crackable(msgs_by_replay: Dict[int, Set[int]]) -> bool:
+def is_crackable(msgs_by_replay: dict[int, set[int]]) -> bool:
     """True if the captured EAPOL messages form a crackable pair.
 
     Aircrack-ng / hashcat need either M1+M2 (ANonce from M1, SNonce+MIC from M2,
@@ -110,7 +110,7 @@ def is_crackable(msgs_by_replay: Dict[int, Set[int]]) -> bool:
     return False
 
 
-def pmkid_from_m1(key_data: bytes) -> Optional[str]:
+def pmkid_from_m1(key_data: bytes) -> str | None:
     """Extract the RSN PMKID (16-byte) from an M1 frame's key-data KDEs.
 
     KDE layout: 0xDD | len | OUI(00-0F-AC) | data-type | data.
@@ -131,7 +131,7 @@ def pmkid_from_m1(key_data: bytes) -> Optional[str]:
     return None
 
 
-def _is_station_mac(mac: Optional[str], bssid: str) -> bool:
+def _is_station_mac(mac: str | None, bssid: str) -> bool:
     """True if *mac* looks like an individual client (not the AP, not group/mcast)."""
     if not mac:
         return False
@@ -147,9 +147,9 @@ def _is_station_mac(mac: Optional[str], bssid: str) -> bool:
 
 def client_from_data_frame(
     to_ds: bool, from_ds: bool,
-    addr1: Optional[str], addr2: Optional[str], addr3: Optional[str],
+    addr1: str | None, addr2: str | None, addr3: str | None,
     bssid: str,
-) -> Optional[str]:
+) -> str | None:
     """Resolve the client STA MAC from a data frame's ToDS/FromDS direction."""
     if to_ds and not from_ds:
         cand = addr2                             # addr1=BSSID, addr2=SA(client)
@@ -173,10 +173,10 @@ class SnapClient:
 
 @dataclass
 class MonitorSnapshot:
-    clients: List[SnapClient] = field(default_factory=list)
-    handshake_client: Optional[str] = None
+    clients: list[SnapClient] = field(default_factory=list)
+    handshake_client: str | None = None
     pmkid_present: bool = False
-    pmkid_hashes: Dict[str, str] = field(default_factory=dict)
+    pmkid_hashes: dict[str, str] = field(default_factory=dict)
     ap_seen: bool = False
 
 
@@ -191,13 +191,13 @@ class LiveMonitor:
         self.interface = interface
         self.target_bssid = target_bssid.upper()
         self.available = _SCAPY_OK
-        self.error: Optional[str] = None
+        self.error: str | None = None
 
         self._lock = threading.Lock()
-        self._clients: Dict[str, dict] = {}
-        self._hs: Dict[str, Dict[int, Set[int]]] = {}
+        self._clients: dict[str, dict] = {}
+        self._hs: dict[str, dict[int, set[int]]] = {}
         self._pmkid_present = False
-        self._pmkid_hashes: Dict[str, str] = {}
+        self._pmkid_hashes: dict[str, str] = {}
         self._ap_seen = False
         self._sniffer = None
 
@@ -242,7 +242,7 @@ class LiveMonitor:
         except Exception:                        # pragma: no cover
             return False
 
-    def _rssi(self, pkt) -> Optional[int]:
+    def _rssi(self, pkt) -> int | None:
         try:
             if RadioTap is not None and pkt.haslayer(RadioTap):
                 val = getattr(pkt[RadioTap], "dBm_AntSignal", None)
@@ -309,11 +309,11 @@ class LiveMonitor:
         logger.debug("EAPOL M%d  client=%s  replay=%d", msg, client, replay)
 
     # ── client bookkeeping ───────────────────────────────────────────────────
-    def _touch(self, mac: str, rssi: Optional[int]) -> None:
+    def _touch(self, mac: str, rssi: int | None) -> None:
         with self._lock:
             self._touch_locked(mac, rssi)
 
-    def _touch_locked(self, mac: str, rssi: Optional[int]) -> None:
+    def _touch_locked(self, mac: str, rssi: int | None) -> None:
         c = self._clients.get(mac)
         if c is None:
             c = {"rssi": rssi if rssi is not None else -100, "packets": 0, "last": 0.0}
@@ -348,13 +348,13 @@ class LiveMonitor:
 # Shared client discovery (used by handshake engine and deauth module)
 # ═════════════════════════════════════════════════════════════════════════════
 
-def _parse_station_csv(csv_path: str, bssid: str) -> Dict[str, dict]:
+def _parse_station_csv(csv_path: str, bssid: str) -> dict[str, dict]:
     """Minimal airodump-ng station-section parser: {mac: {power, packets}}."""
-    out: Dict[str, dict] = {}
+    out: dict[str, dict] = {}
     if not csv_path or not os.path.exists(csv_path):
         return out
     try:
-        with open(csv_path, "r", errors="replace") as fh:
+        with open(csv_path, errors="replace") as fh:
             lines = [ln.replace("\0", "") for ln in fh]
     except OSError:
         return out
@@ -391,7 +391,7 @@ def discover_clients(
     bssid: str,
     channel: int,
     duration: int = 10,
-) -> List[dict]:
+) -> list[dict]:
     """Passively discover active clients of *bssid* on *channel*.
 
     Runs a channel-locked airodump-ng (for the CSV + to hold the channel) and a
@@ -420,7 +420,7 @@ def discover_clients(
         monitor.start()
         time.sleep(max(3, duration))
 
-        merged: Dict[str, dict] = {
+        merged: dict[str, dict] = {
             sc.mac: {"power": sc.rssi, "packets": sc.packets}
             for sc in monitor.snapshot().clients
         }

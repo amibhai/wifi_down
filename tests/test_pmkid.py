@@ -9,9 +9,15 @@ from __future__ import annotations
 
 from modules import pmkid
 from modules.pmkid import (
-    mac_from_hex, essid_from_hex, parse_hc22000_line,
-    summarize_hash_lines, summarize_hash_file, describe_summary,
-    parse_hashcat_show, TYPE_PMKID, TYPE_EAPOL,
+    TYPE_EAPOL,
+    TYPE_PMKID,
+    describe_summary,
+    essid_from_hex,
+    mac_from_hex,
+    parse_hashcat_show,
+    parse_hc22000_line,
+    summarize_hash_file,
+    summarize_hash_lines,
 )
 
 # "HomeNet" == 486f6d654e6574 ; AP aa:bb:cc:dd:ee:ff ; STA 11:22:33:44:55:66

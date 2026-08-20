@@ -12,7 +12,6 @@ import sys
 import textwrap
 import time
 from datetime import datetime
-from typing import Optional
 
 from rich.console import Console
 from rich.style import Style
@@ -321,7 +320,7 @@ def print_banner() -> None:
     _print_enter_prompt()
 
 
-def print_compact_header(interface: Optional[str] = None) -> None:
+def print_compact_header(interface: str | None = None) -> None:
     """One-line header — called at top of every menu loop iteration.
 
     Shows:  wifi_down  ◈  YYYY-MM-DD  HH:MM:SS  ◈  <iface>

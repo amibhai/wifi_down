@@ -23,7 +23,6 @@ from __future__ import annotations
 import argparse
 import logging
 import os
-import re
 import sys
 import time
 import traceback
@@ -31,25 +30,38 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from modules.utils import (
-    check_root, check_dependencies, setup_logging,
-    get_wireless_interfaces, enable_monitor_mode, disable_monitor_mode,
-    emit_session_summary,
+from modules.banner import (
+    C,
+    error,
+    info,
+    print_banner,
+    print_compact_header,
+    print_menu,
+    success,
+    warn,
 )
-from modules.banner import C, print_banner, print_compact_header, print_menu, info, success, warn, error
-from modules.scanner import scan_networks, select_network
-from modules.handshake import capture_handshake
-from modules.wordlist import wordlist_menu
 from modules.cracker import cracker_menu
-from modules.wep import wep_crack_menu
 from modules.deauth import deauth_menu
-from modules.wps import wps_menu, detect_wps_capability
-from modules.state import StateManager, Stage
-from modules.preflight import run_preflight, run_preflight_with_autofix, SENTINEL_FILE
-from modules.sequencer import AttackSequencer
-from modules.report import generate_report
+from modules.handshake import capture_handshake
+from modules.i18n import init as i18n_init
+from modules.i18n import t
+from modules.preflight import SENTINEL_FILE, run_preflight, run_preflight_with_autofix
 from modules.ratelimit import DEFAULT_MAX_BURSTS_PER_MIN
-from modules.i18n import init as i18n_init, t
+from modules.scanner import scan_networks, select_network
+from modules.sequencer import AttackSequencer
+from modules.state import Stage, StateManager
+from modules.utils import (
+    check_dependencies,
+    check_root,
+    disable_monitor_mode,
+    emit_session_summary,
+    enable_monitor_mode,
+    get_wireless_interfaces,
+    setup_logging,
+)
+from modules.wep import wep_crack_menu
+from modules.wordlist import wordlist_menu
+from modules.wps import detect_wps_capability, wps_menu
 
 logger = logging.getLogger(__name__)
 
@@ -107,10 +119,14 @@ def _action_check_interface() -> None:
     """Print a full diagnostic of wireless interface status."""
     import shutil
     import subprocess as _sp
+
     from rich.console import Console as _Con
+
+    from modules.interface import (
+        get_monitor_interfaces as _get_mon,
+    )
     from modules.interface import (
         get_wireless_interfaces as _get_managed,
-        get_monitor_interfaces as _get_mon,
     )
     con = _Con()
 
@@ -374,7 +390,7 @@ def action_full_auto() -> None:
         return
 
     if wps["enabled"] and wps["locked"]:
-        warn(f"WPS detected but AP-Lock is set — falling back to handshake path.")
+        warn("WPS detected but AP-Lock is set — falling back to handshake path.")
 
     info("Step 4: Capturing handshake...")
     cap = capture_handshake(
@@ -652,14 +668,13 @@ def launch_prism() -> None:
     """Launch the PRISM rich TUI interface (opt-in, requires textual)."""
     try:
         from textual.app import App, ComposeResult
-        from textual.widgets import Header, Footer, Static, DataTable, Log
         from textual.containers import Horizontal, Vertical
+        from textual.widgets import DataTable, Footer, Header, Log, Static
     except ImportError:
         error("PRISM TUI requires textual. Install: pip install textual")
         info("Falling back to standard menu. Use --no-tui to suppress this message.")
         return
 
-    from rich.text import Text
     import textwrap
 
     class PRISMApp(App):
@@ -947,4 +962,4 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-# 
+#

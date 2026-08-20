@@ -13,16 +13,13 @@ from __future__ import annotations
 import logging
 import os
 import re
-import tempfile
+import subprocess
 import threading
 import time
-from typing import Optional
-
-import subprocess
 
 from modules import radio
-from modules.banner import C, info, success, warn, error, print_section
-from modules.ratelimit import DeauthRateLimiter, DEFAULT_MAX_BURSTS_PER_MIN
+from modules.banner import C, error, info, print_section, success, warn
+from modules.ratelimit import DEFAULT_MAX_BURSTS_PER_MIN, DeauthRateLimiter
 
 logger = logging.getLogger(__name__)
 
@@ -38,7 +35,7 @@ STATS_REFRESH    =  1
 
 def deauth_menu(
     interface: str,
-    target: Optional[dict] = None,
+    target: dict | None = None,
     deauth_limit: int = DEFAULT_MAX_BURSTS_PER_MIN,
 ) -> None:
     print_section("Deauth Attack")
@@ -185,7 +182,7 @@ def _parse_clients_csv(csv_path: str, bssid: str) -> list[dict]:
         return []
     clients: list[dict] = []
     try:
-        with open(csv_path, "r", errors="replace") as f:
+        with open(csv_path, errors="replace") as f:
             content = f.read()
     except OSError:
         return []
@@ -286,7 +283,8 @@ def _run_attack(
     finally:
         for p in procs:
             try:
-                p.terminate(); p.wait(timeout=3)
+                p.terminate()
+                p.wait(timeout=3)
             except Exception:
                 pass
         if do_spoof and original_mac:
@@ -380,7 +378,7 @@ def _draw_stats(stats: dict, bssid: str, ssid: str, limiter: DeauthRateLimiter) 
 # MAC spoofing helpers
 ###############################################################################
 
-def _get_interface_mac(interface: str) -> Optional[str]:
+def _get_interface_mac(interface: str) -> str | None:
     try:
         result = subprocess.run(
             ["ip", "link", "show", interface], capture_output=True, text=True, timeout=5

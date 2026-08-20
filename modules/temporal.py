@@ -18,18 +18,16 @@ If the crack succeeds using a temporal wordlist, it's flagged in the report as:
 from __future__ import annotations
 
 import hashlib
-import itertools
 import logging
 import struct
+from collections.abc import Callable, Iterator
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from pathlib import Path
-from typing import Callable, Iterator, Optional
 
-from rich import box
 from rich.console import Console
 from rich.panel import Panel
-from rich.progress import Progress, BarColumn, TextColumn, SpinnerColumn
+from rich.progress import BarColumn, Progress, SpinnerColumn, TextColumn
 
 logger = logging.getLogger(__name__)
 console = Console()
@@ -275,8 +273,8 @@ def _find_algorithms(vendor: str) -> list[AlgorithmEntry]:
 def generate_temporal_wordlist(
     bssid: str,
     vendor: str,
-    beacon_timestamp: Optional[datetime] = None,
-    out_path: Optional[Path] = None,
+    beacon_timestamp: datetime | None = None,
+    out_path: Path | None = None,
 ) -> tuple[Path, int]:
     """
     Generate a temporal PSK wordlist for the target.
@@ -345,9 +343,9 @@ def display_temporal_summary(
 # ─── CLI entry point ──────────────────────────────────────────────────────────
 
 def temporal_menu(
-    target: Optional[dict],
-    beacon_ts: Optional[datetime] = None,
-) -> Optional[Path]:
+    target: dict | None,
+    beacon_ts: datetime | None = None,
+) -> Path | None:
     """Interactive Temporal Attack Engine launcher."""
     console.print()
     console.print(Panel(

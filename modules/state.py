@@ -10,7 +10,6 @@ from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
 from enum import Enum
 from pathlib import Path
-from typing import Optional
 
 logger = logging.getLogger(__name__)
 
@@ -30,15 +29,15 @@ class Stage(str, Enum):
 
 @dataclass
 class SessionState:
-    interface: Optional[str] = None
-    monitor_interface: Optional[str] = None
-    target_bssid: Optional[str] = None
-    target_ssid: Optional[str] = None
-    channel: Optional[int] = None
-    capture_file: Optional[str] = None
-    handshake_file: Optional[str] = None
-    wordlist_file: Optional[str] = None
-    result: Optional[str] = None
+    interface: str | None = None
+    monitor_interface: str | None = None
+    target_bssid: str | None = None
+    target_ssid: str | None = None
+    channel: int | None = None
+    capture_file: str | None = None
+    handshake_file: str | None = None
+    wordlist_file: str | None = None
+    result: str | None = None
     stage: Stage = Stage.INIT
     started_at: str = field(
         default_factory=lambda: datetime.now(timezone.utc).isoformat()
@@ -112,7 +111,7 @@ class StateManager:
         return incomplete
 
     @classmethod
-    def load(cls, path: Path) -> "StateManager":
+    def load(cls, path: Path) -> StateManager:
         """Load a previously-saved session from disk."""
         mgr = cls.__new__(cls)
         mgr._register_signals = cls._register_signals.__get__(mgr)  # type: ignore[attr-defined]

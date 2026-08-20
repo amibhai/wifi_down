@@ -3,11 +3,14 @@ from __future__ import annotations
 
 from datetime import datetime
 from pathlib import Path
-import pytest
 
 from modules.temporal import (
-    _mac_to_bytes, _find_algorithms, generate_temporal_wordlist,
-    WPA_MIN, WPA_MAX, _filter_wpa,
+    WPA_MAX,
+    WPA_MIN,
+    _filter_wpa,
+    _find_algorithms,
+    _mac_to_bytes,
+    generate_temporal_wordlist,
 )
 
 

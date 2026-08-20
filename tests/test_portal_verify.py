@@ -11,9 +11,8 @@ from __future__ import annotations
 
 import pytest
 
-from modules import wpacrypto, pmkid
+from modules import pmkid, wpacrypto
 from modules.phantom import _PortalHandler
-
 
 SSID, AP, STA, PW = "HomeNet", "aabbccddeeff", "112233445566", "correct1x"
 

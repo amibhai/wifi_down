@@ -42,10 +42,10 @@ import shutil
 import signal
 import subprocess
 import time
+from collections.abc import Iterable
 from contextlib import contextmanager
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from pathlib import Path
-from typing import Iterable, Optional
 
 logger = logging.getLogger(__name__)
 
@@ -53,7 +53,7 @@ logger = logging.getLogger(__name__)
 try:  # pragma: no cover - trivial import guard
     from rich.console import Console
 
-    _console: Optional["Console"] = Console()
+    _console: Console | None = Console()
 except Exception:  # pragma: no cover
     _console = None
 
@@ -94,7 +94,7 @@ def freq_to_band(freq_mhz: int) -> str:
     return "6"
 
 
-def channel_to_freq(channel: int, band: Optional[str] = None) -> Optional[int]:
+def channel_to_freq(channel: int, band: str | None = None) -> int | None:
     """
     Convert a channel number to its centre frequency in MHz.
 
@@ -143,7 +143,7 @@ def band_of_channel(channel: int) -> str:
 
 @dataclass
 class RfkillEntry:
-    id: Optional[int]
+    id: int | None
     type: str            # 'wlan', 'bluetooth', …
     device: str          # 'phy0', …
     soft_blocked: bool
@@ -192,7 +192,7 @@ def parse_rfkill_text(text: str) -> list[RfkillEntry]:
             Hard blocked: no
     """
     entries: list[RfkillEntry] = []
-    cur: Optional[RfkillEntry] = None
+    cur: RfkillEntry | None = None
     header = re.compile(r"^\s*(\d+):\s+([^:]+):\s+(.*)$")
     for line in text.splitlines():
         m = header.match(line)
@@ -309,7 +309,7 @@ class IwInterface:
     name: str
     type: str = ""       # 'managed', 'monitor', 'AP', …
     phy: str = ""
-    channel: Optional[int] = None
+    channel: int | None = None
     addr: str = ""
 
 
@@ -322,7 +322,7 @@ def parse_iw_dev(text: str) -> list[IwInterface]:
     only / verify variants.
     """
     ifaces: list[IwInterface] = []
-    cur: Optional[IwInterface] = None
+    cur: IwInterface | None = None
     cur_phy = ""
     for raw in text.splitlines():
         line = raw.strip()
@@ -358,7 +358,7 @@ def _iw_dev() -> list[IwInterface]:
         return []
 
 
-def wireless_interfaces(mode: Optional[str] = None) -> list[str]:
+def wireless_interfaces(mode: str | None = None) -> list[str]:
     """
     Names of wireless interfaces, optionally filtered by mode.
 
@@ -371,7 +371,7 @@ def wireless_interfaces(mode: Optional[str] = None) -> list[str]:
     return out
 
 
-def interface_mode(name: str) -> Optional[str]:
+def interface_mode(name: str) -> str | None:
     """Current mode of *name* per ``iw dev`` ('monitor'/'managed'/…) or None."""
     for i in _iw_dev():
         if i.name == name:
@@ -409,7 +409,7 @@ def phy_bands_from_info(text: str) -> set[str]:
     return {freq_to_band(f) for f in parse_phy_frequencies(text)}
 
 
-def phy_of(interface: str) -> Optional[str]:
+def phy_of(interface: str) -> str | None:
     """The ``phyN`` a wireless interface belongs to, per ``iw dev``."""
     for i in _iw_dev():
         if i.name == interface and i.phy:
@@ -590,7 +590,7 @@ def stop_conflicting_services() -> list[str]:
     return active
 
 
-def restore_services(names: Optional[list[str]] = None) -> list[str]:
+def restore_services(names: list[str] | None = None) -> list[str]:
     """
     Restart the services we previously stopped (from *names* or the persisted
     record) and clear the record. Returns the list restored.
@@ -618,7 +618,7 @@ def has_pending_restore() -> bool:
 # Process management  (crash-safe child spawning + reaping)
 # ══════════════════════════════════════════════════════════════════════════════
 
-def terminate_process(proc: Optional[subprocess.Popen], grace: float = 3.0) -> None:
+def terminate_process(proc: subprocess.Popen | None, grace: float = 3.0) -> None:
     """
     Gracefully stop a process **and its whole process group** (SIGTERM, then
     SIGKILL after *grace*). None-safe and already-dead-safe. On POSIX this reaps
@@ -740,7 +740,7 @@ def managed_process(cmd: list[str], *, grace: float = 3.0, **kwargs):
 # airmon-ng output parsing  (pure)
 # ══════════════════════════════════════════════════════════════════════════════
 
-def parse_airmon_new_iface(output: str, original: str) -> Optional[str]:
+def parse_airmon_new_iface(output: str, original: str) -> str | None:
     """
     Parse the new monitor interface name from ``airmon-ng start`` output across
     the several phrasings shipped over the years.
@@ -782,7 +782,7 @@ def base_matches_monitor(monitor_iface: str, requested: str) -> bool:
 # Monitor enable / disable orchestrators
 # ══════════════════════════════════════════════════════════════════════════════
 
-def _enable_via_iw(interface: str) -> Optional[str]:
+def _enable_via_iw(interface: str) -> str | None:
     """
     Fallback monitor-mode path using ``ip`` + ``iw`` directly. Works on many
     drivers where airmon-ng's vif dance fails. The interface keeps its name.
@@ -872,7 +872,7 @@ def enable_monitor(interface: str, method: str = "auto") -> str:
     if driver:
         logger.debug("Driver for %s: %s (prefers_iw=%s)", interface, driver, prefers_iw(driver))
 
-    new_iface: Optional[str] = None
+    new_iface: str | None = None
     diag = ""
 
     if not use_iw:
