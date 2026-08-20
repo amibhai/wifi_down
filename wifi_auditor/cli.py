@@ -389,8 +389,18 @@ def action_full_auto() -> None:
     state["capture_file"] = cap
     _sm.transition(Stage.CAPTURING, capture_file=cap, handshake_file=cap)
 
-    info("Step 5: Generating wordlist...")
-    wl = wordlist_menu(target["ssid"], auto=True)
+    info("Step 5: Generating target-driven wordlist...")
+    wl = None
+    try:
+        from modules import strategy as _strategy
+        wl = _strategy.build_auto_wordlist(target)
+        if wl:
+            plan = _strategy.recommend_strategies(target)
+            success(f"Strategy plan: {_strategy.describe_plan(plan)}")
+    except Exception as exc:
+        logger.debug("auto-wordlist failed, falling back: %s", exc)
+    if not wl:                                   # non-crackable or engine miss
+        wl = wordlist_menu(target["ssid"], auto=True)
     if not wl:
         error("Wordlist generation failed.")
         return
@@ -582,9 +592,19 @@ def run_headless(
         return 1
     sm.transition(Stage.CAPTURING, capture_file=cap, handshake_file=cap)
 
-    logger.info("Generating wordlist ...")
+    logger.info("Generating target-driven wordlist ...")
     sm.transition(Stage.WORDLIST)
-    wl = wordlist_menu(target.get("ssid", ""), auto=True)
+    wl = None
+    try:
+        from modules import strategy as _strategy
+        wl = _strategy.build_auto_wordlist(target)
+        if wl:
+            logger.info("Auto-wordlist plan: %s",
+                        _strategy.describe_plan(_strategy.recommend_strategies(target)))
+    except Exception as exc:
+        logger.debug("auto-wordlist failed, falling back: %s", exc)
+    if not wl:
+        wl = wordlist_menu(target.get("ssid", ""), auto=True)
     if not wl:
         logger.error("Wordlist generation failed")
         sm.transition(Stage.FAILED)

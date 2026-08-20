@@ -17,10 +17,19 @@ The strategy *names* line up with the generators in ``modules/wordlist.py`` /
 """
 from __future__ import annotations
 
+import logging
+import os
 from dataclasses import dataclass
+from datetime import datetime
+from pathlib import Path
 from typing import Optional
 
 from modules import scanner
+
+logger = logging.getLogger(__name__)
+
+WORDLIST_DIR = "wordlists"
+WPA_MIN, WPA_MAX = 8, 63          # a WPA PSK is 8–63 chars; anything else is noise
 
 # ── Strategy identifiers (aligned with wordlist.py / temporal.py) ─────────────
 S_VENDOR_DEFAULTS = "vendor_defaults"    # router_defaults.yaml known PSKs
@@ -185,3 +194,172 @@ def describe_plan(strategies: list[CrackStrategy], top: int = 3) -> str:
         return "no dictionary-crackable strategy for this target"
     names = " → ".join(s.label for s in strategies[:top])
     return names
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# Execution — turn a strategy into an actual wordlist file
+# ══════════════════════════════════════════════════════════════════════════════
+
+def _common_data_path() -> Optional[str]:
+    """Path to the bundled breach-frequency common-password list, if present."""
+    p = Path(__file__).resolve().parent.parent / "data" / "common_passwords.txt"
+    return str(p) if p.is_file() else None
+
+
+def _vendor_default_passwords(vendor: str, bssid: str) -> list[str]:
+    """
+    Default PSK candidates for *vendor* from ``data/router_defaults.yaml``, with
+    ``{last4mac}`` substituted. Uses the vendor we already resolved at scan time
+    rather than re-doing an OUI lookup, so it works offline and deterministically.
+    """
+    vendor = (vendor or "").strip()
+    if not vendor:
+        return []
+    last4 = bssid.replace(":", "").lower()[-4:] if bssid else ""
+    try:
+        import yaml
+        from modules.oui import DEFAULTS_FILE
+        with open(DEFAULTS_FILE, encoding="utf-8") as fh:
+            data = yaml.safe_load(fh) or {}
+    except Exception as exc:  # pragma: no cover - config edge
+        logger.debug("router_defaults load failed: %s", exc)
+        return []
+
+    vlow = vendor.lower()
+    out: list[str] = []
+    for pattern, entry in data.get("vendor_defaults", {}).items():
+        plow = pattern.lower()
+        if plow in vlow or vlow in plow:
+            for pwd in entry.get("passwords", []):
+                out.append(str(pwd).replace("{last4mac}", last4))
+            break
+    seen: set[str] = set()
+    return [p for p in out if not (p in seen or seen.add(p))]
+
+
+def materialize_strategy(name: str, target: dict, out_dir: str = WORDLIST_DIR) -> Optional[str]:
+    """
+    Produce a concrete wordlist file for strategy *name* against *target*, or
+    ``None`` when it cannot be auto-materialised (digit/mask brute-force and
+    personal CUPP profiling need a mask engine or interactive input — the caller
+    simply falls through to the next strategy).
+    """
+    os.makedirs(out_dir, exist_ok=True)
+    bssid  = target.get("bssid", "")
+    vendor = _resolve_vendor(target)
+    ssid   = target.get("ssid") or target.get("essid") or ""
+    stamp  = datetime.now().strftime("%Y%m%d_%H%M%S")
+    tag    = (bssid.replace(":", "")[-6:] or "target")
+
+    if name == S_VENDOR_DEFAULTS:
+        pwds = _vendor_default_passwords(vendor, bssid)
+        if not pwds:
+            return None
+        out = os.path.join(out_dir, f"vendordef_{tag}_{stamp}.txt")
+        with open(out, "w", encoding="utf-8") as fh:
+            fh.write("\n".join(pwds) + "\n")
+        return out
+
+    if name == S_TEMPORAL_PSK:
+        if not bssid:
+            return None
+        try:
+            from modules import temporal
+            out_path = Path(out_dir) / f"temporal_{tag}_{stamp}.txt"
+            path, count = temporal.generate_temporal_wordlist(
+                bssid, vendor or "generic", out_path=out_path
+            )
+            return str(path) if count > 0 else None
+        except Exception as exc:
+            logger.debug("temporal materialise failed: %s", exc)
+            return None
+
+    if name in (S_COMMON, S_RULE_BASED):
+        return _common_data_path()
+
+    if name == S_PHONE_NUMBERS:
+        out = os.path.join(out_dir, f"phones_{tag}_{stamp}.txt")
+        try:
+            from modules.wordlist import gen_phones
+            return out if gen_phones(out) > 0 else None
+        except Exception as exc:
+            logger.debug("phones materialise failed: %s", exc)
+            return None
+
+    if name == S_ISP_PATTERNS:
+        if not ssid or ssid == "<hidden>":
+            return None
+        out = os.path.join(out_dir, f"ssidmut_{tag}_{stamp}.txt")
+        try:
+            from modules.wordlist import gen_ssid
+            return out if gen_ssid(ssid, out) > 0 else None
+        except Exception as exc:
+            logger.debug("ssid-mutation materialise failed: %s", exc)
+            return None
+
+    # S_DIGIT_MASKS / S_CUPP_PERSONAL / S_MASK_BRUTEFORCE — not a plain wordlist.
+    return None
+
+
+def build_auto_wordlist(
+    target: dict,
+    out_dir: str = WORDLIST_DIR,
+    max_lines: int = 2_000_000,
+) -> Optional[str]:
+    """
+    Execute the full ranked plan into **one** WPA-valid, de-duplicated wordlist,
+    ordered best-strategy-first (few high-probability candidates up front, the
+    broad common list last). Returns the combined file path, or ``None`` for a
+    non-crackable target.
+
+    This is what closes the loop: the strategy the engine *recommends* is the
+    wordlist that actually gets cracked, with zero operator interaction.
+    """
+    plan = recommend_strategies(target)
+    if not plan:
+        return None
+
+    names = [s.name for s in plan]
+    if S_COMMON not in names:      # always guarantee the fallback
+        names.append(S_COMMON)
+
+    seen: set[str] = set()
+    combined: list[str] = []
+    used: list[str] = []
+    for name in names:
+        try:
+            path = materialize_strategy(name, target, out_dir)
+        except Exception:
+            path = None
+        if not path or not os.path.isfile(path):
+            continue
+        added = 0
+        try:
+            with open(path, "r", errors="replace") as fh:
+                for line in fh:
+                    w = line.strip()
+                    if not w or w in seen or not (WPA_MIN <= len(w) <= WPA_MAX):
+                        continue
+                    seen.add(w)
+                    combined.append(w)
+                    added += 1
+                    if len(combined) >= max_lines:
+                        break
+        except OSError:
+            continue
+        if added:
+            used.append(name)
+        if len(combined) >= max_lines:
+            break
+
+    if not combined:
+        return None
+
+    stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    tag = (target.get("bssid", "").replace(":", "")[-6:] or "target")
+    out = os.path.join(out_dir, f"auto_{tag}_{stamp}.txt")
+    with open(out, "w", encoding="utf-8") as fh:
+        fh.write("\n".join(combined) + "\n")
+    logger.info("AUTO_WORDLIST target=%s strategies=%s candidates=%d path=%s",
+                target.get("bssid", ""), "+".join(used), len(combined), out)
+    return out

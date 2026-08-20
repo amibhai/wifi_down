@@ -5,6 +5,49 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [2.6.0] — 2026-08-20
+
+**Closed-loop auto-cracking — Phase 6.** In 2.5.0 the strategy engine *recommended*
+a plan; now it *executes* it. Full-auto and headless runs materialise the ranked
+plan into a single, WPA-valid, target-specific wordlist and crack with it — the
+recommended strategy is the wordlist that actually runs, with zero operator
+interaction.
+
+### Added
+
+- **`modules/strategy.py` execution layer:**
+  - `materialize_strategy(name, target, out_dir)` — turns a strategy id into a
+    real wordlist file: `vendor_defaults` → `router_defaults.yaml` PSKs (using
+    the vendor resolved at scan time, offline & deterministic);
+    `temporal_vendor_psk` → `temporal.generate_temporal_wordlist`;
+    `common`/`rule_based` → the bundled breach list; `phone_numbers` /
+    `isp_patterns` → the matching `wordlist.py` generators. Mask/CUPP strategies
+    return `None` (they need a mask engine / interactive input) and the caller
+    falls through.
+  - `build_auto_wordlist(target)` — walks the ranked plan and combines every
+    materialised strategy into **one** de-duplicated, WPA-valid (8–63 char),
+    best-first wordlist (few high-probability candidates up front, the broad
+    common list last), always guaranteeing the common fallback. Returns `None`
+    for non-crackable targets.
+- **10 new tests** in `tests/test_strategy.py` — materialisation per strategy,
+  WPA-validity, dedup, and best-first ordering (a vendor default provably ranks
+  ahead of the generic common list).
+
+### Changed
+
+- **`wifi_auditor/cli.py`** — `action_full_auto` and `run_headless` now generate
+  their wordlist via `strategy.build_auto_wordlist(target)` (surfacing the plan),
+  falling back to the generic `wordlist_menu(auto=True)` only when the engine
+  yields nothing. The full pipeline — scan → classify → capture → **plan →
+  generate → crack** — is now target-driven end to end.
+
+### Verification
+
+- Full suite **373 passing** (`py -3.12 -m pytest -q`) — 363 + 10 new, zero
+  regressions.
+
+---
+
 ## [2.5.0] — 2026-08-20
 
 **Target-driven crack-strategy engine — Phase 5.** The tool gathers a lot of
