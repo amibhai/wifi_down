@@ -465,9 +465,20 @@ def action_phantom() -> None:
     if not state["monitor_interface"]:
         error(t("error.no_interface"))
         return
+    # If we already captured a handshake/PMKID, hand the 22000 hash to the portal
+    # so it can verify harvested passwords against the real PSK in real time.
+    cap = str(state.get("capture_file") or "")
+    verify_hashfile = None
+    if cap.endswith((".hc22000", ".22000")) and os.path.exists(cap):
+        verify_hashfile = cap
+    elif cap.endswith(".cap"):
+        hc = cap[:-4] + ".hc22000"          # _save writes this sibling next to the .cap
+        if os.path.exists(hc):
+            verify_hashfile = hc
     phantom_menu(
         interface=state["monitor_interface"],
         target=state.get("target"),
+        verify_hashfile=verify_hashfile,
     )
     state["phantom_active"] = True
 

@@ -5,6 +5,44 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [2.9.0] — 2026-08-20
+
+**Evil-twin captive portal with live PSK verification — Phase 9.** The captive
+portal was a blind credential logger: it recorded whatever a victim typed and
+used an attempt-count trick to fake "wrong password". With the offline crypto
+from 2.7.0 it now *verifies* each submission against a captured handshake in real
+time — so "incorrect password, try again" is genuine, and a success means the
+**real, confirmed** PSK was harvested.
+
+### Added
+
+- **`modules/pmkid.py::make_pmkid_verifier(hash_file)`** — builds a
+  `verify(password) -> bool` closure from the PMKIDs in a captured 22000 file
+  (per-ESSID PMK cache), or `None` if the file holds none.
+- **`tests/test_portal_verify.py`** — 9 tests: the verifier factory
+  (correct/wrong/invalid-length/no-PMKID/missing-file) and the portal decision
+  logic (`_PortalHandler._evaluate`) for the verified and legacy paths.
+
+### Changed
+
+- **`modules/phantom.py`** — the captive portal handler gains `verify_password`
+  / `verified_password` and a testable `_evaluate(passwd, attempt) ->
+  (verified, show_connecting)`: with a verifier attached, only the *correct*
+  password advances to the "connecting" page (a wrong guess genuinely gets "try
+  again"); without one, the legacy heuristic is preserved. Each submission is
+  logged with its `verified` status. `_run_phantom` / `phantom_menu` accept a
+  `verify_hashfile`.
+- **`wifi_auditor/cli.py`** — `action_phantom` locates the captured `.hc22000`
+  (the sibling of the saved `.cap`) and hands it to the portal, so live PSK
+  verification switches on automatically once a target's PMKID is captured.
+
+### Verification
+
+- New pure-logic tests (verifier factory + portal decision) — no HTTP socket, no
+  RF. Run `py -3.12 -m pytest -q` to confirm the full suite.
+
+---
+
 ## [2.8.0] — 2026-08-20
 
 **6 GHz channel-locking, end to end — Phase 8.** 2.2.0 taught the scanner to

