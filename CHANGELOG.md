@@ -5,6 +5,47 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [2.4.0] — 2026-08-20
+
+**PMKID / EAPOL hash intelligence — Phase 4.** The modern, clientless attack
+path (PMKID) was present but blind: it produced a hash file and hoped. Now the
+tool reads its own capture with precision — telling the operator exactly which
+networks were captured, PMKID vs EAPOL, and whether the result is crackable
+*before* a wordlist is ever run — and recovers cracked passwords reliably
+instead of guessing where the potfile lives.
+
+### Added
+
+- **`modules/pmkid.py` rebuilt around a pure, tested hash-intelligence layer:**
+  - `parse_hc22000_line()` — parses a hashcat-22000 line into
+    `{type, type_name, key, bssid, station, essid, raw}`; `mac_from_hex` /
+    `essid_from_hex` decode the AP MAC and hex ESSID.
+  - `summarize_hash_lines()` / `summarize_hash_file()` — aggregate a capture
+    into per-network PMKID/EAPOL counts and a `crackable` verdict;
+    `describe_summary()` renders the one-liner
+    (`"2 PMKID + 1 EAPOL across 2 network(s)"`).
+  - `parse_hashcat_show()` + `already_cracked()` — read recovered passwords back
+    the robust way via `hashcat --show` (exact even when the password contains
+    `:`), enabling an **instant-win potfile check** before any long crack.
+  - `crack_pmkid_hashcat()` reworked: potfile instant-win → run → reliable
+    `--show` retrieval, replacing the fragile `~/.hashcat/hashcat.potfile` guess.
+- **`tests/test_pmkid.py`** — 27 pure-logic tests over real 22000 lines
+  (MAC/ESSID decode, PMKID vs EAPOL, multi-network summary, `--show` parsing
+  incl. colon-in-password).
+
+### Changed
+
+- **`modules/handshake.py`** — the moment a capture is saved and converted to
+  `.hc22000`, it now prints a precise capture summary (per-network PMKID/EAPOL
+  breakdown), so the operator knows what they have before cracking.
+
+### Verification
+
+- Full suite **337 passing** (`py -3.12 -m pytest -q`) — 310 + 27 new, zero
+  regressions.
+
+---
+
 ## [2.3.0] — 2026-08-20
 
 **Architecture & quality — Phase 3.** Every long-lived child process in the

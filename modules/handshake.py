@@ -437,6 +437,22 @@ def _save(cap_path: str, bssid: str) -> str:
                 )
                 if os.path.exists(hc) and os.path.getsize(hc) > 0:
                     print(f'      hashcat: {hc}')
+                    # Tell the operator exactly what is in the capture and
+                    # whether it is crackable — before any wordlist is run.
+                    try:
+                        from modules.pmkid import summarize_hash_file, describe_summary
+                        summary = summarize_hash_file(hc)
+                        print(f'      capture: {describe_summary(summary)}')
+                        for b, net in summary['networks'].items():
+                            tags = []
+                            if net['pmkid']:
+                                tags.append(f"{net['pmkid']}×PMKID")
+                            if net['eapol']:
+                                tags.append(f"{net['eapol']}×EAPOL")
+                            print(f'               {b}  {net["ssid"] or "<hidden>"}'
+                                  f'  ({", ".join(tags)})')
+                    except Exception as exc:
+                        logger.debug("hash summary skipped: %s", exc)
                     break
             except (FileNotFoundError, subprocess.TimeoutExpired):
                 continue
