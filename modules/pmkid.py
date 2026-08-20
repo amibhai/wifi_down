@@ -370,6 +370,143 @@ def crack_pmkid_pure(hash_file: str, wordlist_file: str, progress=None):
     return crack_hc22000_pure(hash_file, wordlist_file, progress)
 
 
+# ══════════════════════════════════════════════════════════════════════════════
+# Raw .cap handshake extraction  (no hcxpcapngtool required)
+# ══════════════════════════════════════════════════════════════════════════════
+
+def _norm_mac(m: str) -> str:
+    m = (m or "").strip()
+    return m.upper() if ":" in m else mac_from_hex(m)
+
+
+def _assemble_eapol_record(essid: str, ap_mac: str, sta_mac: str,
+                           m1_eapol: bytes, m2_eapol: bytes) -> Optional[dict]:
+    """
+    Build a verifiable EAPOL record from the raw M1 and M2 EAPOL-Key frames.
+
+    ANonce comes from M1 (offset 17), SNonce + MIC from M2, and the MIC is
+    recomputed over the MIC-zeroed M2 frame. Pure — no scapy, fully testable.
+    """
+    from modules import wpacrypto
+    if len(m1_eapol) < 49 or len(m2_eapol) < 97:
+        return None
+    return {
+        "type":        TYPE_EAPOL,
+        "type_name":   "EAPOL",
+        "bssid":       _norm_mac(ap_mac),
+        "station":     _norm_mac(sta_mac),
+        "essid":       essid or "",
+        "anonce":      m1_eapol[17:49].hex(),
+        "snonce":      m2_eapol[17:49].hex(),
+        "eapol":       wpacrypto.zero_mic(m2_eapol),
+        "mic":         m2_eapol[81:97].hex(),
+        "key_version": wpacrypto.key_version_from_eapol(m2_eapol),
+        "raw":         "",
+    }
+
+
+def extract_handshakes_from_cap(cap_file: str, bssid: str | None = None,
+                                ssid: str | None = None) -> list[dict]:
+    """
+    Extract crackable M1+M2 handshake records from a raw ``.cap``/``.pcap`` via
+    scapy — no hcxpcapngtool needed. Returns [] if scapy is unavailable or the
+    file holds no complete pair. ESSID is read from beacons/probe-responses;
+    pass *ssid* to override when the capture has no beacon.
+    """
+    try:
+        from scapy.all import rdpcap
+        from scapy.layers.dot11 import Dot11, Dot11Beacon, Dot11ProbeResp, Dot11Elt
+        from scapy.layers.eap import EAPOL
+        from modules.eapol_monitor import classify_eapol
+    except Exception:
+        return []
+    try:
+        packets = rdpcap(cap_file)
+    except Exception:
+        return []
+
+    want = bssid.upper() if bssid else None
+    essids: dict[str, str] = {}
+    m1_frames: dict[tuple, bytes] = {}
+    records: list[dict] = []
+    seen: set[tuple] = set()
+
+    for pkt in packets:
+        if not pkt.haslayer(Dot11):
+            continue
+        d = pkt.getlayer(Dot11)
+
+        if pkt.haslayer(Dot11Beacon) or pkt.haslayer(Dot11ProbeResp):
+            ap = (d.addr2 or d.addr3 or "").upper()
+            elt = pkt.getlayer(Dot11Elt)
+            while isinstance(elt, Dot11Elt):
+                if elt.ID == 0 and elt.info:
+                    essids[ap] = elt.info.decode(errors="replace")
+                    break
+                elt = elt.payload.getlayer(Dot11Elt) if elt.payload else None
+            continue
+
+        if not pkt.haslayer(EAPOL):
+            continue
+        eapol = bytes(pkt.getlayer(EAPOL))
+        if len(eapol) < 49:
+            continue
+        key_info = int.from_bytes(eapol[5:7], "big")
+        msg = classify_eapol(key_info)
+        replay = eapol[9:17]
+        a1 = (d.addr1 or "").upper()
+        a2 = (d.addr2 or "").upper()
+
+        if msg == 1:                       # M1: AP → STA
+            m1_frames[(a2, a1, replay)] = eapol
+        elif msg == 2 and len(eapol) >= 97:  # M2: STA → AP
+            ap, sta = a1, a2
+            if want and ap != want:
+                continue
+            m1 = m1_frames.get((ap, sta, replay))
+            if not m1:                     # fall back: any M1 for this AP/STA
+                for (a, s, _r), v in m1_frames.items():
+                    if a == ap and s == sta:
+                        m1 = v
+                        break
+            if m1 and (ap, sta) not in seen:
+                rec = _assemble_eapol_record(
+                    essids.get(ap, ssid or ""), ap, sta, m1, eapol)
+                if rec:
+                    seen.add((ap, sta))
+                    records.append(rec)
+    return records
+
+
+def crack_cap_pure(cap_file: str, wordlist_file: str, bssid: str | None = None,
+                   ssid: str | None = None, progress=None) -> tuple[str, str] | None:
+    """
+    Crack a raw ``.cap`` handshake with **no external tools at all** — not even
+    hcxpcapngtool. Extracts M1/M2 via scapy, then runs the wordlist through the
+    pure crypto. Returns ``(bssid, password)`` or ``None``.
+    """
+    records = extract_handshakes_from_cap(cap_file, bssid, ssid)
+    if not records:
+        return None
+    n = 0
+    try:
+        with open(wordlist_file, "r", errors="replace") as wl:
+            for line in wl:
+                cand = line.rstrip("\r\n")
+                if not (8 <= len(cand) <= 63):
+                    continue
+                n += 1
+                if progress and n % 500 == 0:
+                    progress(n)
+                cache: dict[str, bytes] = {}
+                for rec in records:
+                    if _record_matches(rec, cand, cache):
+                        return rec["bssid"], cand
+    except OSError:
+        return None
+    return None
+
+
 def make_verifier(hash_file: str):
     """
     Build a ``verify(password) -> bool`` closure from every PMKID **and EAPOL**

@@ -363,3 +363,57 @@ def build_auto_wordlist(
     logger.info("AUTO_WORDLIST target=%s strategies=%s candidates=%d path=%s",
                 target.get("bssid", ""), "+".join(used), len(combined), out)
     return out
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# Mask attacks — the strategies a wordlist cannot express (hashcat -a 3)
+# ══════════════════════════════════════════════════════════════════════════════
+
+def _digit_mask(n: int) -> str:
+    return "?d" * n
+
+
+def masks_for_target(target: dict) -> list[str]:
+    """
+    hashcat brute-force masks (attack mode ``-a 3``) suited to *target*,
+    best-first. These express the ``digit_masks`` / ``mask_bruteforce``
+    strategies the engine recommends but a wordlist cannot materialise.
+
+    Returns ``[]`` for non-crackable targets. An 8-digit all-numeric PSK is the
+    single most common brute-forceable WPA key (10^8 ≈ minutes on a GPU), so it
+    is always offered for a crackable target; numeric-SSID targets additionally
+    get the 9- and 10-digit spaces (phone numbers).
+    """
+    tier = target.get("security_tier", "")
+    crackable = target.get("crackable")
+    if crackable is None:
+        crackable = scanner.is_dictionary_crackable(tier) if tier else True
+    if tier and not crackable:
+        return []
+
+    ssid_tag = target.get("ssid_tag", "")
+    masks: list[str]
+    if ssid_tag in (scanner.TAG_NUMERIC, scanner.TAG_ISP_FORMAT):
+        masks = [_digit_mask(10), _digit_mask(8), _digit_mask(9), _digit_mask(11)]
+    else:
+        masks = [_digit_mask(8)]     # classic 8-digit numeric default PSK
+    seen: set[str] = set()
+    return [m for m in masks if not (m in seen or seen.add(m))]
+
+
+def materialize_masks(target: dict, out_dir: str = WORDLIST_DIR) -> Optional[str]:
+    """
+    Write the target's masks to a hashcat ``.hcmask`` file (one mask per line)
+    for ``hashcat -a 3 -m 22000 <hash> <file.hcmask>``. Returns the path, or
+    ``None`` when no mask applies (non-crackable target).
+    """
+    masks = masks_for_target(target)
+    if not masks:
+        return None
+    os.makedirs(out_dir, exist_ok=True)
+    stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    tag = (target.get("bssid", "").replace(":", "")[-6:] or "target")
+    out = os.path.join(out_dir, f"masks_{tag}_{stamp}.hcmask")
+    with open(out, "w", encoding="utf-8") as fh:
+        fh.write("\n".join(masks) + "\n")
+    return out

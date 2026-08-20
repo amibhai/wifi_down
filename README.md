@@ -13,19 +13,22 @@ Automated WiFi security auditing framework. Menu-driven, end-to-end pipeline:
 
 | Stage | What it does |
 |---|---|
-| **Scanner** | Monitor mode scan via `airodump-ng` with SSID entropy + vendor tags + WPA3 downgrade detection |
-| **WPS Attacks** | Pixie-Dust (offline nonce) / Vendor PIN spray (OUI-matched) / Full brute-force / Wash scan |
-| **Handshake Capture** | Bulletproof 3-engine pipeline: airodump-ng + scapy lfilter sniffer + hcxdumptool PMKID (sequential, never parallel) |
+| **Radio Reliability Core** | `modules/radio.py` — rfkill soft/hard-block handling, driver-quirk routing (Realtek → `iw`), airmon-ng↔iw fallback, **symmetric** service save/restore (won't brick `iwd`/`systemd-networkd`), crash-safe process supervisor, `--restore` recovery |
+| **Scanner** | Band-aware **2.4 / 5 / 6 GHz** scan via `airodump-ng`; SSID entropy + vendor tags; precise security tiers — WPA2-PSK / **WPA2-WPA3 transition** / WPA3-SAE / **Enterprise (802.1X)** / **OWE** / WEP / OPEN, each with `crackable` + downgrade flags |
+| **WPS Attacks** | Pixie-Dust (offline nonce) / Vendor PIN spray (OUI-matched) / Full brute-force / Wash scan, with **exponential lockout backoff + resume** |
+| **Handshake Capture** | Event-driven engine (scapy `LiveMonitor` + airodump-ng), **band-aware channel lock incl. 6 GHz** (locks 6 GHz by frequency), clientless PMKID sweep; non-PSK targets skipped so no budget is wasted |
+| **Crack Strategy Engine** | `modules/strategy.py` — fuses SSID class + vendor + tier + entropy into a **ranked, explained** plan, then **auto-materialises** it into one WPA-valid, best-first wordlist (vendor defaults → temporal PSK → common) for hands-free full-auto |
+| **Offline WPA Crypto** | `modules/wpacrypto.py` — pure-Python PMK/PTK/MIC/PMKID (IEEE-vector verified); **instant password verification** and a **zero-dependency cracker** for PMKID *and* 4-way handshakes — no aircrack-ng / hashcat / hcxpcapngtool required |
 | **Wordlist Generator** | 14 strategies: CUPP-style personal profiling, token pattern builder, smart scenario engine + QoL stats panel |
 | **Pattern Engine** | Token-based custom wordlist builder (`%W/%Y/%s/[abc]/{text}`) with save/reload, estimate, tqdm progress |
 | **Smart Scenario Engine** | 5 real-world profiles (Indian Mobile User, Corporate, Student, Consumer, Custom) sorted by breach frequency |
-| **Cracker** | `aircrack-ng` + `cowpatty` + `hashcat` dict + `hashcat` rule-based (best64, d3ad0ne, dive…) |
+| **Cracker** | `aircrack-ng` + `cowpatty` + `hashcat` dict / rule-based (best64, d3ad0ne…) / **mask attack** (`-a 3` digit brute) + **pure-Python** fallback (no tools) |
 | **WEP Cracker** | ARP replay / fragmentation / ChopChop pipelines |
 | **Deauth Attack** | Rate-limited, token-bucket controlled |
-| **Smart Sequencer** | WPS-aware ranking: WPS unlocked → score 95, PMKID → 90, deauth → 75 |
-| **Full Auto Mode** | Scan → WPS probe → WPS path OR handshake path → wordlist → crack |
+| **Smart Sequencer** | WPS-aware ranking + strategy-engine crack plan; non-PSK (SAE/Enterprise/OWE) targets short-circuit with a clear reason |
+| **Full Auto Mode** | Scan → WPS probe → WPS path OR handshake path → **target-driven wordlist** → crack, end to end |
 | **Pentest Reports** | Markdown + JSON + HTML, SHA-256 evidence |
-| **Phantom AP** | Rogue AP Signal Shadowing — beacon-identical clone, 3 personalities, vendor-matched captive portal |
+| **Phantom AP (Evil Twin)** | Rogue AP Signal Shadowing — **4 personalities** (Mirror / Upgrade / Stealth / **WPA3→WPA2 Downgrade**), vendor-matched captive portal with **live PSK verification** (confirms harvested passwords against the captured handshake) |
 | **Legal Notice** | Single plain-text notice printed at startup |
 | **Signal Intercept** | Post-Phantom bettercap pipeline — live protocol fingerprinting with severity ratings |
 | **Beacon Historian** | Passive behavioral profiling — IE change detection, probe collection, stability score 0–100 |

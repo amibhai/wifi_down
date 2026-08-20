@@ -5,6 +5,48 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [2.11.0] — 2026-08-20
+
+**Loose ends closed — Phase 11.** Four gaps between "strong" and "complete":
+mask attacks, an *active* WPA3 downgrade, tool-free raw-`.cap` cracking, and a
+README that finally reflects the whole tool.
+
+### Added
+
+- **Mask attacks** (`modules/strategy.py`) — `masks_for_target()` /
+  `materialize_masks()` generate hashcat `-a 3` masks the wordlist path can't
+  express (8-digit numeric PSKs always; 8–11 digit / phone spaces for numeric
+  SSIDs), written as `.hcmask`. New cracker backend **[4] mask attack**
+  (`_run_hashcat_mask`) with reliable `--show` retrieval.
+- **WPA3-SAE active downgrade** (`modules/phantom.py`) —
+  `PERSONALITY_DOWNGRADE`: a **WPA2-only clone** of a transition-mode AP that
+  coerces WPA3-capable clients onto a dictionary-crackable WPA2 4-way (their M2
+  MIC is derived from the real PSK). `downgrade_recommended(target)` flags
+  transition APs and the Phantom menu recommends it automatically.
+- **Raw `.cap` pure cracking** (`modules/pmkid.py`) — `crack_cap_pure()` /
+  `extract_handshakes_from_cap()` recover a key straight from a `.cap` with **no
+  hcxpcapngtool at all** (scapy reads M1/M2, reusing `classify_eapol`); the
+  crypto/assembly (`_assemble_eapol_record`) is pure and unit-tested, the scapy
+  read a thin adapter.
+- **`tests/test_phase11.py`** — 15 tests (mask generation/materialisation,
+  downgrade recommend + WPA2-only hostapd conf, raw-cap record assembly + verify,
+  graceful degradation without scapy).
+
+### Changed
+
+- **`README.md`** — the feature table now documents the Radio Reliability Core,
+  band-aware 2.4/5/6 GHz scanning, precise security tiers, the Crack Strategy
+  Engine, the Offline WPA Crypto layer + pure cracker, mask attacks, and the
+  4-personality Evil-Twin with live PSK verification.
+
+### Verification
+
+- New pure-logic tests across masks, downgrade config, and raw-cap assembly.
+  Run `py -3.12 -m pytest -q` to confirm the full suite (the scapy `.cap` reader
+  is the one path that still wants real-hardware/real-capture validation).
+
+---
+
 ## [2.10.0] — 2026-08-20
 
 **Full 22000 handshake support — pure EAPOL cracking & verification (Phase 10).**

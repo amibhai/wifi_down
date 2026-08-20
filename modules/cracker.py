@@ -144,6 +144,7 @@ def _crack_pmkid_menu(hash_file: str, wordlist_file: str) -> None:
   {C.GREEN}[1]{C.RESET} hashcat dict  {C.DIM}– GPU-accelerated dictionary (mode 22000){"" if has_hashcat else f"  {C.RED}[not installed]{C.RESET}"}{C.RESET}
   {C.GREEN}[2]{C.RESET} hashcat rules {C.DIM}– dict + rule mutations (best64, d3ad0ne){"" if has_hashcat else f"  {C.RED}[not installed]{C.RESET}"}{C.RESET}
   {C.GREEN}[3]{C.RESET} pure Python   {C.DIM}– no external tools; standards crypto (slower){C.RESET}
+  {C.GREEN}[4]{C.RESET} mask attack   {C.DIM}– hashcat -a 3 digit brute-force (8-digit PSKs){"" if has_hashcat else f"  {C.RED}[not installed]{C.RESET}"}{C.RESET}
 """)
 
     choice = input(f"  {C.YELLOW}Backend [1]: {C.RESET}").strip() or "1"
@@ -163,6 +164,11 @@ def _crack_pmkid_menu(hash_file: str, wordlist_file: str) -> None:
         _run_hashcat(hash_file, wordlist_file, rules=rule)
     elif choice == "3":
         _run_pure_pmkid(hash_file, wordlist_file)
+    elif choice == "4":
+        if not has_hashcat:
+            error("hashcat is required for mask attacks.")
+            return
+        _run_hashcat_mask(hash_file, target=None)
     else:
         error(f"Unknown option: {choice!r}")
 
@@ -170,6 +176,43 @@ def _crack_pmkid_menu(hash_file: str, wordlist_file: str) -> None:
 ###############################################################################
 # Backend: aircrack-ng
 ###############################################################################
+
+def _run_hashcat_mask(hash_file: str, target: dict | None = None) -> None:
+    """
+    Brute-force a captured hash with a hashcat mask attack (``-a 3``). Uses the
+    strategy engine's target-aware masks when a *target* is given, else the
+    classic 8-digit numeric PSK space.
+    """
+    from modules import strategy
+    masks = strategy.masks_for_target(target) if target else ["?d?d?d?d?d?d?d?d"]
+    if not masks:
+        warn("No mask applies to this target (not a PSK network).")
+        return
+
+    info(f"Mask attack — {len(masks)} mask(s): {', '.join(masks)}")
+    for mask in masks:
+        info(f"hashcat -a 3 (mask {mask})...")
+        cmd = ["hashcat", "-m", "22000", "-a", "3", hash_file, mask,
+               "--status", "--status-timer", "10"]
+        try:
+            subprocess.run(cmd, timeout=7200)
+        except (subprocess.TimeoutExpired, KeyboardInterrupt):
+            warn("Mask attempt stopped.")
+        except OSError as exc:
+            error(f"hashcat error: {exc}")
+            return
+        # Reliable retrieval via the PMKID hash-show path.
+        try:
+            from modules.pmkid import already_cracked
+            hit = already_cracked(hash_file)
+            if hit:
+                pw = next(iter(hit.values()))
+                found(f"KEY FOUND!  →  {pw}")
+                return
+        except Exception:
+            pass
+    warn("No key recovered from the mask space.")
+
 
 def _run_pure_pmkid(hash_file: str, wordlist_file: str) -> None:
     """Crack a captured PMKID with zero external tools (standards crypto)."""

