@@ -98,6 +98,14 @@ class AttackSequencer:
             self.display_plan(plan)
             return plan
 
+        # ── Target-driven crack plan (fuses SSID class + vendor + tier) ──
+        try:
+            from modules import strategy
+            crack_plan = strategy.recommend_strategies(ap_info)
+        except Exception:
+            crack_plan = []
+        crack_primary = crack_plan[0].name if crack_plan else "ssid_mutations"
+
         # ── WPS Pixie-Dust: highest priority if WPS is on and unlocked ───
         if wps_enabled and not wps_locked:
             ver_tag = f" v{wps_version}" if wps_version else ""
@@ -136,10 +144,9 @@ class AttackSequencer:
 
         # ── PMKID: no client required ─────────────────────────────────────
         if has_pmkid or clients == 0:
-            wl = "vendor_defaults" if vendor else "ssid_mutations"
             steps.append(AttackStep(
                 attack_type="pmkid",
-                wordlist_strategy=wl,
+                wordlist_strategy=crack_primary,
                 reason="PMKID: no client reconnect needed" + (
                     f" — vendor '{vendor}' known, defaults loaded first" if vendor else ""
                 ),
@@ -156,10 +163,9 @@ class AttackSequencer:
                     f"Weak signal ({signal} dBm) — deauth may be unreliable; "
                     "reduce --deauth-limit if sending"
                 )
-            wl = "vendor_defaults" if vendor else "ssid_mutations"
             steps.append(AttackStep(
                 attack_type="deauth_handshake",
-                wordlist_strategy=wl,
+                wordlist_strategy=crack_primary,
                 reason=f"{clients} client(s) visible, signal {signal} dBm",
                 score=deauth_score,
             ))
@@ -173,28 +179,22 @@ class AttackSequencer:
         # ── Passive capture: always a fallback ───────────────────────────
         steps.append(AttackStep(
             attack_type="passive_handshake",
-            wordlist_strategy="ssid_mutations",
+            wordlist_strategy=crack_primary,
             reason="Passive: wait for natural client reconnection",
             score=20.0,
         ))
 
-        # ── Wordlist strategy enrichment ──────────────────────────────────
-        if vendor:
+        # ── Crack-strategy plan (engine-driven, explainable) ──────────────
+        # Every capture step shares the same ranked primary strategy; the full
+        # ordered plan is surfaced so the operator sees *why* it was chosen.
+        if crack_plan:
             for step in steps:
-                if step.attack_type in ("pmkid", "deauth_handshake"):
-                    step.wordlist_strategy = "vendor_defaults"
-            plan.reasoning.append(f"Vendor '{vendor}' identified — defaults prioritized")
-
-        ssid_clean = ssid.replace(" ", "")
-        if ssid_clean and ssid_clean.isdigit():
-            for step in steps:
-                step.wordlist_strategy = "phone_numbers"
-            plan.reasoning.append("SSID is all-numeric — phone number patterns prioritized")
-        elif ssid and ssid[-1].isdigit():
-            plan.reasoning.append("SSID ends in digit(s) — year/number mutations added")
-
-        if ssid_tag == "DEFAULT_SSID":
-            plan.reasoning.append("Default SSID detected — vendor defaults are high-confidence")
+                if step.attack_type in ("pmkid", "deauth_handshake", "passive_handshake"):
+                    step.wordlist_strategy = crack_primary
+            plan.reasoning.append(
+                "Crack plan (best first): " + strategy.describe_plan(crack_plan)
+            )
+            plan.reasoning.append(f"→ {crack_plan[0].label}: {crack_plan[0].rationale}")
 
         # ── Sort by score ─────────────────────────────────────────────────
         steps.sort(key=lambda s: s.score, reverse=True)

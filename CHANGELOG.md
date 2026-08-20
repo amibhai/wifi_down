@@ -5,6 +5,48 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [2.5.0] — 2026-08-20
+
+**Target-driven crack-strategy engine — Phase 5.** The tool gathers a lot of
+intelligence about each AP (SSID class, OUI vendor, band, security tier, name
+entropy) — this release is where it finally *pays off*. Instead of running the
+same wordlist against everything, the auditor now fuses those signals into a
+**ranked, explained** cracking plan and attacks with the highest-probability
+strategy first. That target→strategy fusion is the thing most tools in this
+class simply do not do.
+
+### Added
+
+- **`modules/strategy.py` — the crack-strategy engine (pure, deterministic):**
+  - `recommend_strategies(target)` → an ordered list of `CrackStrategy`
+    (`name`, `label`, `rationale`, `score`) fusing `security_tier` (crackability),
+    `ssid_tag`, `ssid_entropy`, and `vendor` (direct or via OUI). Returns `[]`
+    for non-PSK targets (Enterprise/SAE/OWE/OPEN/WEP).
+  - Maps intelligence to action: default/vendor SSID → **vendor defaults** first;
+    a vendor with a documented MAC/date PSK algorithm → **temporal vendor PSK**;
+    ISP-format → provisioning patterns; numeric → phone/digit masks; personal →
+    CUPP profiling; random-hex → mask brute-force (dictionaries correctly
+    deprioritised); low-entropy names boost the common-password list.
+  - `primary_strategy()` and `describe_plan()` for callers and UI.
+  - `vendor_has_temporal_algo()` bridges to the `temporal.py` algorithm registry.
+- **`tests/test_strategy.py`** — 23 tests (non-crackable → empty, per-tag
+  ordering, dedup, descending rank, entropy nudge, vendor→temporal bridge) plus
+  3 sequencer integration tests proving the engine's choice reaches the plan.
+
+### Changed
+
+- **`modules/sequencer.py`** — the PMKID / deauth / passive capture steps now
+  take their wordlist strategy from `strategy.recommend_strategies()` instead of
+  the old `if vendor else` heuristic, and the attack plan surfaces the full
+  ranked crack plan with its rationale (`"Crack plan (best first): …"`).
+
+### Verification
+
+- Full suite **363 passing** (`py -3.12 -m pytest -q`) — 337 + 26 new, zero
+  regressions.
+
+---
+
 ## [2.4.0] — 2026-08-20
 
 **PMKID / EAPOL hash intelligence — Phase 4.** The modern, clientless attack
