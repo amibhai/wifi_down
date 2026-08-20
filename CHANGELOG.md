@@ -5,6 +5,46 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [2.10.0] — 2026-08-20
+
+**Full 22000 handshake support — pure EAPOL cracking & verification (Phase 10).**
+The zero-dependency cracker (2.7.0) and the live-verifying captive portal (2.9.0)
+previously handled only **PMKID**. This extends both to the common case — a
+4-way **handshake (EAPOL / type 02)** — so a handshake-only capture can be
+cracked and verified entirely offline, no aircrack-ng / hashcat required.
+
+### Added
+
+- **`modules/wpacrypto.py`** — `snonce_from_eapol()` and
+  `key_version_from_eapol()` read the supplicant nonce (offset 17) and the
+  key-descriptor version (1/2/3) straight out of an EAPOL-Key frame.
+- **`modules/pmkid.py`:**
+  - `parse_hc22000_eapol()` — parse a `WPA*02*…` line into verifiable fields
+    (MIC, AP/STA, ESSID, ANonce, SNonce, key version, frame).
+  - `load_hc22000_records()` + `_record_matches()` — a unified loader/matcher
+    that handles PMKID (01) *and* EAPOL (02) records.
+  - `crack_hc22000_pure()` — pure-Python cracker for both record types;
+    `crack_pmkid_pure()` is now a thin alias.
+  - `make_verifier()` — the portal verifier now confirms passwords against a
+    handshake too, not just a PMKID; `make_pmkid_verifier()` aliases it.
+- **`tests/test_eapol_crack.py`** — constructs a valid EAPOL 22000 line from a
+  known passphrase (SNonce at the standard offset, MIC over the zeroed frame),
+  then parses, cracks, and verifies it back — end to end, no RF.
+
+### Changed
+
+- The captive portal (via `make_pmkid_verifier`) and the cracker's pure-Python
+  backend (via `crack_pmkid_pure`) automatically gain handshake support — no
+  call-site changes needed.
+
+### Verification
+
+- New pure-logic tests (EAPOL field extraction, line parsing, round-trip crack,
+  verifier, mixed PMKID+EAPOL loading). Run `py -3.12 -m pytest -q` to confirm
+  the full suite.
+
+---
+
 ## [2.9.0] — 2026-08-20
 
 **Evil-twin captive portal with live PSK verification — Phase 9.** The captive

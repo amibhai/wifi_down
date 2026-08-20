@@ -113,6 +113,30 @@ def zero_mic(eapol_frame: bytes, offset: int = MIC_OFFSET) -> bytes:
     return eapol_frame[:offset] + b"\x00" * MIC_LEN + eapol_frame[offset + MIC_LEN:]
 
 
+# EAPOL-Key frame layout (802.1X header + key descriptor):
+#   [5:7]   Key Information   [17:49] Key Nonce (SNonce in M2)   [81:97] Key MIC
+_SNONCE_OFFSET = 17
+_SNONCE_LEN = 32
+_KEYINFO_OFFSET = 5
+
+
+def snonce_from_eapol(eapol_frame: bytes) -> bytes:
+    """Supplicant nonce (SNonce) — 32 bytes at offset 17 of the EAPOL-Key frame."""
+    return eapol_frame[_SNONCE_OFFSET:_SNONCE_OFFSET + _SNONCE_LEN]
+
+
+def key_version_from_eapol(eapol_frame: bytes) -> int:
+    """
+    EAPOL-Key descriptor version (1 = WPA/TKIP-HMAC-MD5, 2 = WPA2/CCMP-HMAC-SHA1,
+    3 = AES-128-CMAC), read from the low 3 bits of the Key Information field.
+    Defaults to 2 (the overwhelmingly common case) if the frame is too short.
+    """
+    if len(eapol_frame) < _KEYINFO_OFFSET + 2:
+        return 2
+    key_info = int.from_bytes(eapol_frame[_KEYINFO_OFFSET:_KEYINFO_OFFSET + 2], "big")
+    return key_info & 0x07
+
+
 def verify_eapol(passphrase: str, ssid: str, ap_mac: BytesLike, sta_mac: BytesLike,
                  anonce: BytesLike, snonce: BytesLike, eapol_frame_mic_zeroed: bytes,
                  expected_mic: BytesLike, key_version: int = 2) -> bool:
