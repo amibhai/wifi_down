@@ -91,7 +91,14 @@ def wep_crack_menu(interface: str, target: dict) -> str | None:
         if not os.path.exists(cap_path):
             error(f"File not found: {cap_path}")
             return None
-        return _crack_loop(cap_path, 0)
+        info(f"Cracking {cap_path} with aircrack-ng (already-captured IVs)...")
+        key = _crack_wep_attempt(cap_path)
+        if key:
+            _save_wep_result(bssid, essid, key)
+            found(f"WEP KEY FOUND!  →  {key}")
+            return key
+        error("Could not recover a WEP key from this capture — it likely needs more IVs.")
+        return None
     else:
         error("Invalid mode.")
         return None

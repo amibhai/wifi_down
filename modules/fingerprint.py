@@ -25,13 +25,11 @@ _VENDOR_IE_MAP: dict[bytes, str] = {
     b"\x00\x10\x18":     "Broadcom",
     b"\x00\x90\x4c":     "Broadcom HT (Epigram)",
     b"\x00\x03\x7f":     "Atheros",
-    b"\x00\x17\xf2":     "Apple HomeKit",
     b"\x50\x6f\x9a\x09": "Wi-Fi Alliance P2P",
     b"\x50\x6f\x9a\x1c": "Wi-Fi Alliance FILS",
 }
 
 _DEVICE_SIGNATURES: list[tuple[str, str]] = [
-    ("Apple HomeKit",      "Apple smart-home device (likely static key)"),
     ("Apple",              "Apple device (Mac / iPhone / iPad)"),
     ("Microsoft WPS",      "WPS-enabled router"),
     ("Microsoft WMM",      "QoS-capable device"),
