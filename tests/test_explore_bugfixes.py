@@ -69,3 +69,22 @@ def test_package_has_runnable_main():
     import importlib
     mod = importlib.import_module("wifi_auditor.__main__")
     assert callable(mod.main)
+
+
+# ── ratelimit: a 0/negative burst limit must not hang forever ───────────────
+
+def test_tokenbucket_zero_limit_does_not_deadlock():
+    """TokenBucket(0) used to have fill_rate 0 → wait_for_token() looped forever."""
+    from modules.ratelimit import TokenBucket
+    tb = TokenBucket(0)
+    assert tb.capacity >= 1
+    # A token must eventually be available (proves the bucket can refill).
+    assert tb.consume() is True
+
+
+def test_deauth_rate_limiter_clamps_nonpositive():
+    from modules.ratelimit import DeauthRateLimiter
+    lim = DeauthRateLimiter(max_bursts_per_min=-5)
+    # wait_for_burst() must not block on a valid, refillable bucket.
+    lim.wait_for_burst("AA:BB:CC:DD:EE:FF")   # returns => no deadlock
+    assert lim.get_stats("AA:BB:CC:DD:EE:FF")["capacity"] >= 1

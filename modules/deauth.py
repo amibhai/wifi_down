@@ -107,7 +107,7 @@ def deauth_menu(
             f"  {C.YELLOW}Max bursts/min [{deauth_limit}] (max {DEFAULT_MAX_BURSTS_PER_MIN}): {C.RESET}"
         ).strip()
         if lim_input:
-            deauth_limit = min(int(lim_input), 20)
+            deauth_limit = max(1, min(int(lim_input), 20))
     except ValueError:
         pass
 

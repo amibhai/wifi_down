@@ -18,7 +18,9 @@ class TokenBucket:
     """
 
     def __init__(self, max_bursts: int = DEFAULT_MAX_BURSTS_PER_MIN) -> None:
-        self._capacity    = float(min(max_bursts, MAX_ALLOWED_BURSTS_PER_MIN))
+        # Clamp to [1, MAX]: a 0/negative capacity yields fill_rate 0 and an
+        # infinite wait_for_token() loop (a 0/negative --deauth-limit would hang).
+        self._capacity    = float(max(1, min(max_bursts, MAX_ALLOWED_BURSTS_PER_MIN)))
         self._tokens      = self._capacity
         self._fill_rate   = self._capacity / 60.0   # tokens/second
         self._last_check  = time.monotonic()
@@ -71,7 +73,7 @@ class DeauthRateLimiter:
     """
 
     def __init__(self, max_bursts_per_min: int = DEFAULT_MAX_BURSTS_PER_MIN) -> None:
-        self._max_bursts = min(max_bursts_per_min, MAX_ALLOWED_BURSTS_PER_MIN)
+        self._max_bursts = max(1, min(max_bursts_per_min, MAX_ALLOWED_BURSTS_PER_MIN))
         self._buckets: dict[str, TokenBucket] = defaultdict(
             lambda: TokenBucket(self._max_bursts)
         )
