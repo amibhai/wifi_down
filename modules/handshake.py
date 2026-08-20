@@ -739,13 +739,25 @@ def capture_handshake(
     start_time = time.time()
     deadline = start_time + timeout
 
-    # ── WPA3-SAE has no dictionary-crackable 4-way — don't waste the window ──
-    sec = (security or "").upper()
-    if ("SAE" in sec or "WPA3" in sec) and "WPA2" not in sec and "TRANS" not in sec:
-        print(f'\n  [!] {ssid} is WPA3-SAE — the 4-way handshake is not '
-              f'dictionary-crackable. Skipping capture.')
-        logger.info("WPA3-SAE target %s — capture skipped", bssid)
-        return None
+    # ── Skip targets whose 4-way/PMKID is not dictionary-crackable ───────────
+    # WPA3-SAE, Enterprise (802.1X), OWE and OPEN all have no PSK to guess, so
+    # spending the capture budget on them is pure waste. WEP has its own path.
+    if security:
+        try:
+            from modules.scanner import is_dictionary_crackable
+            crackable = is_dictionary_crackable(security)
+        except Exception:
+            crackable = True
+        if not crackable:
+            sec = security.upper()
+            reason = ("WPA3-SAE" if ("SAE" in sec or "WPA3" in sec)
+                      else "Enterprise (802.1X)" if ("ENT" in sec or "MGT" in sec)
+                      else "OWE" if "OWE" in sec
+                      else security)
+            print(f'\n  [!] {ssid} is {reason} — no dictionary-crackable PSK '
+                  f'handshake. Skipping capture.')
+            logger.info("Non-crackable target %s (%s) — capture skipped", bssid, security)
+            return None
 
     band = "5GHz" if channel > 14 else "2.4GHz"
     logger.info("=" * 60)

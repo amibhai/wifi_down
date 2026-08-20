@@ -29,12 +29,18 @@ TAG_NUMERIC      = "NUMERIC"
 TAG_CUSTOM       = "CUSTOM"
 
 # Security tier constants
-SEC_WPA3_SAE   = "WPA3_SAE"        # pure WPA3 — SAE only
+SEC_WPA3_SAE   = "WPA3_SAE"        # pure WPA3 — SAE only (no dict-crackable 4-way)
 SEC_WPA3_TRANS = "WPA3_TRANS"      # transition mode — WPA3 + WPA2 (downgrade risk)
-SEC_WPA2       = "WPA2"
-SEC_WPA        = "WPA"
+SEC_WPA3_ENT   = "WPA3_ENT"        # WPA3-Enterprise (802.1X) — not PSK-crackable
+SEC_WPA2       = "WPA2"            # WPA2-PSK
+SEC_WPA2_ENT   = "WPA2_ENT"        # WPA2-Enterprise (802.1X / MGT) — not PSK-crackable
+SEC_WPA        = "WPA"             # legacy WPA1-PSK
+SEC_OWE        = "OWE"             # Enhanced Open (encrypted, no PSK)
 SEC_WEP        = "WEP"
 SEC_OPEN       = "OPEN"
+
+# Tiers where a dictionary attack on a captured 4-way/PMKID is meaningful.
+_DICT_CRACKABLE_TIERS = frozenset({SEC_WPA2, SEC_WPA, SEC_WPA3_TRANS})
 
 _DEFAULT_SSID_PATTERNS = re.compile(
     r"^(NETGEAR|TP-Link|Linksys|dlink|ASUS_|xfinity|Verizon"
@@ -120,41 +126,86 @@ def classify_ssid(ssid: str) -> str:
     return TAG_CUSTOM
 
 
+def is_dictionary_crackable(security_tier: str) -> bool:
+    """
+    True if a captured 4-way handshake / PMKID for this tier is worth a
+    dictionary attack.
+
+    Enterprise (802.1X/MGT), OWE (Enhanced Open), pure WPA3-SAE, OPEN and WEP
+    all return False — capturing an EAPOL for them wastes the budget (WEP has
+    its own key-recovery path; SAE/Enterprise/OWE have no PSK to guess). An
+    empty/unknown tier returns True so we never *skip* a real target we simply
+    failed to classify.
+    """
+    s = (security_tier or "").upper()
+    if not s:
+        return True
+    if "ENT" in s or "MGT" in s or "EAP" in s or "802.1X" in s:  # Enterprise
+        return False
+    if "OWE" in s:                        # Enhanced Open — no PSK
+        return False
+    if s in ("OPEN", "OPN") or "WEP" in s:
+        return False
+    if ("SAE" in s or "WPA3" in s) and "WPA2" not in s and "TRANS" not in s:
+        return False                      # SAE-only
+    return True
+
+
 def classify_security(net: dict) -> dict:
     """
-    Return security_tier and wpa3_downgrade_risk for a network dict.
+    Classify an AP's security into a precise tier plus actionable flags.
 
-    Downgrade risk is flagged when an AP advertises both WPA3 and WPA2
-    (transition mode).  A client that supports WPA3 may be forced by an
-    attacker to associate using WPA2 instead — this is the WPA3 SAE
-    downgrade attack surface.
+    Returns ``security_tier`` (one of the SEC_* constants), plus:
+      * ``wpa3_downgrade_risk`` — True for WPA2/WPA3 transition mode, where a
+        WPA3-capable client can be coerced onto the WPA2 4-way (the SAE
+        downgrade attack surface).
+      * ``enterprise`` — True for 802.1X/MGT networks (no PSK to attack).
+      * ``crackable`` — True only when a captured PSK handshake is worth a
+        dictionary run (see :func:`is_dictionary_crackable`).
+
+    Detection reads airodump-ng's Privacy / Authentication / Cipher columns:
+      Auth ``MGT`` → Enterprise, ``SAE`` → WPA3, ``PSK`` → pre-shared key,
+      ``OWE`` → Enhanced Open.
     """
     privacy = net.get("privacy", "").upper()
     auth    = net.get("auth",    "").upper()
+    cipher  = net.get("cipher",  "").upper()
 
     has_wpa3 = "WPA3" in privacy or "SAE" in auth
-    has_wpa2 = "WPA2" in privacy or "PSK" in auth
+    has_wpa2 = "WPA2" in privacy
+    has_wpa1 = ("WPA" in privacy) and not has_wpa2 and not has_wpa3
+    is_ent   = "MGT" in auth or "EAP" in auth or "802.1X" in auth
+    is_psk   = "PSK" in auth
+    is_owe   = "OWE" in auth or "OWE" in privacy
 
-    if has_wpa3 and has_wpa2:
-        tier     = SEC_WPA3_TRANS
+    downgrade = False
+
+    if has_wpa3 and is_ent:
+        tier = SEC_WPA3_ENT
+    elif has_wpa3 and (has_wpa2 or is_psk):          # WPA2/WPA3 transition
+        tier = SEC_WPA3_TRANS
         downgrade = True
-    elif has_wpa3:
-        tier     = SEC_WPA3_SAE
-        downgrade = False
-    elif has_wpa2:
-        tier     = SEC_WPA2
-        downgrade = False
-    elif "WPA" in privacy:
-        tier     = SEC_WPA
-        downgrade = False
+    elif has_wpa3:                                    # SAE only
+        tier = SEC_WPA3_SAE
+    elif has_wpa2 and is_ent:
+        tier = SEC_WPA2_ENT
+    elif has_wpa2:                                    # WPA2-PSK
+        tier = SEC_WPA2
+    elif has_wpa1:
+        tier = SEC_WPA
+    elif is_owe:
+        tier = SEC_OWE
     elif "WEP" in privacy:
-        tier     = SEC_WEP
-        downgrade = False
+        tier = SEC_WEP
     else:
-        tier     = SEC_OPEN
-        downgrade = False
+        tier = SEC_OPEN
 
-    return {"security_tier": tier, "wpa3_downgrade_risk": downgrade}
+    return {
+        "security_tier":       tier,
+        "wpa3_downgrade_risk": downgrade,
+        "enterprise":          is_ent,
+        "crackable":           tier in _DICT_CRACKABLE_TIERS,
+    }
 
 
 def enrich_network(net: dict) -> dict:
@@ -164,6 +215,14 @@ def enrich_network(net: dict) -> dict:
     net["ssid_chars"]   = ssid_char_classes(ssid)
     net["ssid_tag"]     = classify_ssid(ssid)
     net.update(classify_security(net))
+
+    # Band tag (2.4/5/6 GHz) — best-effort from channel number.
+    try:
+        from modules import radio
+        ch = int(net.get("channel", 0) or 0)
+        net["band"] = radio.band_of_channel(ch) if ch else ""
+    except Exception:
+        net["band"] = ""
 
     # OUI vendor lookup (graceful fallback if network unavailable)
     try:
@@ -179,18 +238,55 @@ def enrich_network(net: dict) -> dict:
 # Scanner
 ###############################################################################
 
-def scan_networks(interface: str, duration: int = DEFAULT_SCAN_TIME) -> list[dict]:
-    """Run airodump-ng for *duration* seconds and return a list of enriched AP dicts."""
+def _resolve_band_flag(interface: str, band: str) -> str:
+    """
+    Resolve a user/`auto` band choice to an ``airodump-ng --band`` letter string.
+
+    ``auto`` inspects the card's phy and scans every band it supports (so a
+    dual-band adapter no longer silently misses every 5 GHz AP — airodump's
+    default is 2.4-only). 6 GHz needs no letter; airodump hops it automatically.
+    """
+    b = (band or "auto").lower()
+    if b in ("2.4", "24", "b", "g", "bg"):
+        return "bg"
+    if b in ("5", "a"):
+        return "a"
+    if b in ("all", "abg", "dual", "both"):
+        return "abg"
+    # auto — detect from the radio's capabilities.
+    try:
+        from modules import radio
+        bands = radio.interface_bands(interface)
+        return radio.airodump_band_flag(bands) if bands else "bg"
+    except Exception:
+        return "bg"
+
+
+def scan_networks(
+    interface: str,
+    duration: int = DEFAULT_SCAN_TIME,
+    band: str = "auto",
+) -> list[dict]:
+    """
+    Run airodump-ng for *duration* seconds and return a list of enriched AP
+    dicts. ``band`` is 'auto' (all bands the card supports), '2.4', '5', or
+    'all'.
+    """
     print_section("Network Scanner")
-    info(f"Scanning on {interface} for {duration}s  (Ctrl+C to stop early)...")
-    logger.info("Starting scan on %s for %ds", interface, duration)
+    band_flag = _resolve_band_flag(interface, band)
+    band_label = {"bg": "2.4 GHz", "a": "5 GHz", "abg": "2.4 + 5 GHz (+6 GHz if supported)"}.get(
+        band_flag, band_flag
+    )
+    info(f"Scanning on {interface} [{band_label}] for {duration}s  (Ctrl+C to stop early)...")
+    logger.info("Starting scan on %s for %ds (band=%s)", interface, duration, band_flag)
 
     tmp_dir  = tempfile.mkdtemp(prefix="wifiaudit_")
     out_base = os.path.join(tmp_dir, "scan")
 
+    cmd = ["airodump-ng", "--write", out_base, "--output-format", "csv",
+           "--write-interval", "2", "--band", band_flag, interface]
     proc = subprocess.Popen(
-        ["airodump-ng", "--write", out_base, "--output-format", "csv",
-         "--write-interval", "2", interface],
+        cmd,
         stdout=subprocess.DEVNULL,
         stderr=subprocess.DEVNULL,
     )
@@ -323,11 +419,18 @@ def _print_network_table(networks: list[dict], caption: str = "") -> None:
         tag      = net.get("ssid_tag", "")
         entropy  = net.get("ssid_entropy", 0.0)
 
-        # Encryption column
+        # Encryption column — tier-driven so Enterprise/OWE are never mistaken
+        # for a crackable PSK network.
         if tier == SEC_WPA3_TRANS:
             enc_col = f"{C.YELLOW}WPA3/WPA2{C.RESET}"      # transition = yellow (risk)
+        elif tier == SEC_WPA3_ENT:
+            enc_col = f"{C.BLUE}WPA3-EAP{C.RESET}"
         elif tier == SEC_WPA3_SAE:
             enc_col = f"{C.GREEN}WPA3-SAE{C.RESET}"
+        elif tier == SEC_WPA2_ENT:
+            enc_col = f"{C.BLUE}WPA2-EAP{C.RESET}"
+        elif tier == SEC_OWE:
+            enc_col = f"{C.GREEN}OWE{C.RESET}"
         elif "WPA2" in enc_up:
             enc_col = f"{C.YELLOW}{enc}{C.RESET}"
         elif "WPA" in enc_up:
@@ -341,6 +444,13 @@ def _print_network_table(networks: list[dict], caption: str = "") -> None:
 
         # Flags / vendor column
         flags: list[str] = []
+        band = net.get("band", "")
+        if band == "5":
+            flags.append(f"{C.CYAN}5G{C.RESET}")
+        elif band == "6":
+            flags.append(f"{C.BLUE}6G{C.RESET}")
+        if net.get("enterprise"):
+            flags.append(f"{C.BLUE}EAP{C.RESET}")
         if downgrade:
             flags.append(f"{C.RED}↓SAE{C.RESET}")          # downgrade risk marker
         tag_abbrev = {
@@ -354,7 +464,10 @@ def _print_network_table(networks: list[dict], caption: str = "") -> None:
             tag_col = _TAG_COLORS.get(tag, C.RESET)
             flags.append(f"{tag_col}{tag_abbrev}{C.RESET}")
 
-        meta = vendor[:8] if vendor else " ".join(flags) if flags else "   "
+        meta_parts = flags[:]
+        if vendor:
+            meta_parts.append(vendor[:8])
+        meta = " ".join(meta_parts) if meta_parts else "   "
 
         ssid_disp = net["ssid"][:19]
         print(fmt.format(
@@ -376,7 +489,7 @@ def _print_network_table(networks: list[dict], caption: str = "") -> None:
     print(
         f"\n  {C.DIM}H = SSID entropy  "
         f"DEF=default  HEX=random-hex  ISP=ISP-format  NUM=numeric  "
-        f"↓SAE=WPA3→WPA2 downgrade risk{C.RESET}"
+        f"5G/6G=band  EAP=Enterprise(802.1X)  ↓SAE=WPA3→WPA2 downgrade risk{C.RESET}"
     )
 
 

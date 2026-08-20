@@ -382,6 +382,75 @@ def is_monitor(name: str) -> bool:
     return interface_mode(name) == "monitor"
 
 
+# ── phy band capability (which bands can this card actually reach?) ───────────
+
+def parse_phy_frequencies(text: str) -> list[int]:
+    """
+    Extract the centre frequencies (MHz) from ``iw phy <phy> info``.
+
+    Lines flagged ``disabled`` (regulatory-blocked) are skipped. DFS / ``no IR``
+    channels are *kept* — they're perfectly usable for passive discovery and
+    still prove the radio reaches that band, which is all band detection needs.
+    """
+    freqs: list[int] = []
+    for line in text.splitlines():
+        low = line.lower()
+        if "disabled" in low:
+            continue
+        m = re.search(r"\*\s*(\d+)(?:\.\d+)?\s*mhz", low)
+        if m:
+            freqs.append(int(m.group(1)))
+    return freqs
+
+
+def phy_bands_from_info(text: str) -> set[str]:
+    """Set of bands ('2.4'/'5'/'6') a phy supports, from its ``iw phy info``."""
+    return {freq_to_band(f) for f in parse_phy_frequencies(text)}
+
+
+def phy_of(interface: str) -> Optional[str]:
+    """The ``phyN`` a wireless interface belongs to, per ``iw dev``."""
+    for i in _iw_dev():
+        if i.name == interface and i.phy:
+            return i.phy
+    return None
+
+
+def interface_bands(interface: str) -> set[str]:
+    """
+    Bands this interface's radio can actually use ('2.4'/'5'/'6').
+
+    Returns an empty set if it can't be determined (caller should then assume
+    2.4-only, the safe default).
+    """
+    phy = phy_of(interface)
+    if not phy:
+        return set()
+    try:
+        res = subprocess.run(
+            ["iw", "phy", phy, "info"], capture_output=True, text=True, timeout=10
+        )
+        return phy_bands_from_info(res.stdout)
+    except (subprocess.TimeoutExpired, FileNotFoundError, OSError):
+        return set()
+
+
+def airodump_band_flag(bands: set[str]) -> str:
+    """
+    Map a set of supported bands to an ``airodump-ng --band`` letter string.
+
+    airodump uses 'b'/'g' for 2.4 GHz and 'a' for 5 GHz; there is **no** letter
+    for 6 GHz — airodump ≥1.7 hops 6 GHz automatically when the card supports it,
+    so it needs no flag. Always includes 'bg' as the floor.
+    """
+    letters = ""
+    if "2.4" in bands or not bands:
+        letters += "bg"
+    if "5" in bands:
+        letters += "a"
+    return letters or "bg"
+
+
 # ══════════════════════════════════════════════════════════════════════════════
 # Driver detection + quirks  (pure quirk table)
 # ══════════════════════════════════════════════════════════════════════════════

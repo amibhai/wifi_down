@@ -74,6 +74,30 @@ class AttackSequencer:
             self.display_plan(plan)
             return plan
 
+        # ── Non-PSK networks: no dictionary/handshake path exists ─────────
+        # WPA3-SAE, Enterprise (802.1X) and OWE have no pre-shared key to guess,
+        # so recommending a handshake/PMKID capture would only waste time.
+        tier = ap_info.get("security_tier", "")
+        try:
+            from modules.scanner import is_dictionary_crackable
+            non_crackable = bool(tier) and not is_dictionary_crackable(tier)
+        except Exception:
+            non_crackable = False
+        if non_crackable:
+            label = {
+                "WPA3_SAE": "WPA3-SAE",
+                "WPA2_ENT": "WPA2-Enterprise (802.1X)",
+                "WPA3_ENT": "WPA3-Enterprise (802.1X)",
+                "OWE":      "Enhanced Open (OWE)",
+            }.get(tier, tier)
+            plan.reasoning.append(
+                f"{label}: no pre-shared key to attack — handshake/PMKID "
+                f"dictionary cracking does not apply"
+            )
+            plan.steps = []
+            self.display_plan(plan)
+            return plan
+
         # ── WPS Pixie-Dust: highest priority if WPS is on and unlocked ───
         if wps_enabled and not wps_locked:
             ver_tag = f" v{wps_version}" if wps_version else ""

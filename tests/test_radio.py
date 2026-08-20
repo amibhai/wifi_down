@@ -220,6 +220,57 @@ class TestParseIwDev:
 # Driver detection + quirks
 # ══════════════════════════════════════════════════════════════════════════════
 
+class TestPhyBands:
+    PHY_INFO = (
+        "Wiphy phy0\n"
+        "\tBand 1:\n"
+        "\t\tFrequencies:\n"
+        "\t\t\t* 2412 MHz [1] (20.0 dBm)\n"
+        "\t\t\t* 2437 MHz [6] (20.0 dBm)\n"
+        "\t\t\t* 2484 MHz [14] (disabled)\n"
+        "\tBand 2:\n"
+        "\t\tFrequencies:\n"
+        "\t\t\t* 5180 MHz [36] (20.0 dBm)\n"
+        "\t\t\t* 5320 MHz [64] (20.0 dBm) (no IR)\n"
+        "\t\t\t* 5745 MHz [149] (20.0 dBm)\n"
+        "\tBand 4:\n"
+        "\t\tFrequencies:\n"
+        "\t\t\t* 5955 MHz [1] (20.0 dBm)\n"
+        "\t\t\t* 6135 MHz [37] (20.0 dBm)\n"
+    )
+
+    def test_parse_frequencies_skips_disabled(self):
+        freqs = radio.parse_phy_frequencies(self.PHY_INFO)
+        assert 2412 in freqs and 2437 in freqs
+        assert 2484 not in freqs          # disabled
+        assert 5180 in freqs and 5745 in freqs
+        assert 5320 in freqs              # DFS / "no IR" kept (usable for passive scan)
+        assert 5955 in freqs and 6135 in freqs
+
+    def test_bands_detected(self):
+        bands = radio.phy_bands_from_info(self.PHY_INFO)
+        assert bands == {"2.4", "5", "6"}
+
+    def test_bands_24_only(self):
+        text = "\t\t\t* 2412 MHz [1] (20.0 dBm)\n\t\t\t* 2437 MHz [6] (20.0 dBm)\n"
+        assert radio.phy_bands_from_info(text) == {"2.4"}
+
+    def test_airodump_band_flag(self):
+        assert radio.airodump_band_flag({"2.4"}) == "bg"
+        assert radio.airodump_band_flag({"2.4", "5"}) == "bga"
+        assert radio.airodump_band_flag({"5"}) == "a"          # 5 GHz-only card
+        assert radio.airodump_band_flag(set()) == "bg"          # unknown → safe default
+        assert radio.airodump_band_flag({"2.4", "5", "6"}) == "bga"  # 6 has no letter
+
+    def test_phy_of(self, monkeypatch):
+        parsed = radio.parse_iw_dev(
+            "phy#0\n\tInterface wlan0\n\t\ttype managed\n"
+        )
+        monkeypatch.setattr(radio, "_iw_dev", lambda: parsed)
+        assert radio.phy_of("wlan0") == "phy0"
+        assert radio.phy_of("wlan9") is None
+
+
 class TestDriverQuirks:
     def test_parse_ethtool(self):
         out = "driver: rtl88x2bu\nversion: 5.13.1\nfirmware-version: N/A\n"

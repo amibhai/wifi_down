@@ -5,6 +5,54 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [2.2.0] — 2026-08-20
+
+**Attack-surface expansion — Phase 2.** The scanner now sees every band the
+radio can reach and tells genuinely attackable networks apart from ones with no
+pre-shared key, so the capture engine and planner stop burning time on targets
+that can never yield a PSK.
+
+### Added
+
+- **Band-aware scanning (2.4 / 5 / 6 GHz).** airodump-ng's default is
+  **2.4-only** — a dual-band card silently missed every 5 GHz AP. `scan_networks`
+  now takes a `band` argument (`auto`/`2.4`/`5`/`all`); `auto` inspects the
+  card's phy (`radio.interface_bands` → `parse_phy_frequencies` /
+  `phy_bands_from_info`) and passes the right `--band` letters. 6 GHz (aircrack
+  ≥1.7) is hopped automatically where the adapter supports it. Each AP is tagged
+  with its `band`, shown as `5G`/`6G` flags in the table.
+- **Precise security classification.** `classify_security` now distinguishes
+  WPA2-PSK, **WPA2-Enterprise (802.1X)**, WPA3-SAE, **WPA3-Enterprise**,
+  WPA2/WPA3 **transition** (downgrade risk), legacy WPA, **OWE (Enhanced Open)**,
+  WEP and OPEN — returning `enterprise` and `crackable` flags alongside the tier.
+  New `is_dictionary_crackable(tier)` is the single source of truth for "is a
+  captured handshake worth a wordlist run?"
+- **WPS lockout backoff.** `lockout_backoff_schedule()` (pure, exponential,
+  capped) plus an interactive sit-out: when an AP signals a WPS rate-limit
+  mid-spray, the tool now backs off, re-probes the lock, and **resumes** instead
+  of discarding the rest of the PIN queue.
+- **Tests:** `tests/test_scanner.py` (tier matrix + crackability + band flag),
+  `tests/test_wps.py` (backoff schedule), `tests/test_sequencer.py` (non-PSK
+  early exits), plus phy-band cases in `tests/test_radio.py` — **+43 tests**.
+
+### Changed
+
+- **`modules/handshake.py`** — the pre-capture skip now covers *all* non-PSK
+  tiers (Enterprise, OWE, OPEN) via `is_dictionary_crackable`, not just
+  WPA3-SAE, so no capture budget is spent where there is no key to crack.
+- **`modules/sequencer.py`** — added a security-tier early exit: WPA3-SAE /
+  Enterprise / OWE targets produce an empty attack plan with a clear reason
+  instead of a futile handshake/PMKID recommendation.
+- **`modules/scanner.py`** — network table renders Enterprise (`EAP`), OWE and
+  band markers; legend updated.
+
+### Verification
+
+- Full suite **302 passing** (`py -3.12 -m pytest -q`) — 259 + 43 new, zero
+  regressions. `scan_networks` signature is backward-compatible.
+
+---
+
 ## [2.1.0] — 2026-08-20
 
 **Reliability core re-engineered — the RF front-end that survives a real

