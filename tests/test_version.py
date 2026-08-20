@@ -19,12 +19,14 @@ def test_version_matches_pyproject():
     """Ensure __version__ matches the version field in pyproject.toml."""
     import pathlib
 
-    import tomllib
-
+    # Parse the version with a regex rather than tomllib: tomllib is stdlib only
+    # on Python 3.11+, and CI runs 3.10 too. The [project] version is the sole
+    # line that begins with `version =`.
     pyproject = pathlib.Path(__file__).parent.parent / "pyproject.toml"
-    with open(pyproject, "rb") as f:
-        data = tomllib.load(f)
-    toml_version = data["project"]["version"]
+    text = pyproject.read_text(encoding="utf-8")
+    m = re.search(r'(?m)^version\s*=\s*["\']([^"\']+)["\']', text)
+    assert m, "no `version = \"...\"` field found in pyproject.toml"
+    toml_version = m.group(1)
 
     from wifi_auditor import __version__
     assert __version__ == toml_version, (

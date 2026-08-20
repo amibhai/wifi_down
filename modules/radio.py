@@ -627,11 +627,25 @@ def terminate_process(proc: subprocess.Popen | None, grace: float = 3.0) -> None
     """
     if proc is None or proc.poll() is not None:
         return
+
+    def _signal_group(sig: int) -> bool:
+        """Signal the process's whole group — but only when it *leads* its own
+        group (i.e. it was spawned in a new session, as :func:`spawn` does).
+        Signalling a group we don't lead would hit our own process, so in that
+        case the caller falls back to a single-pid signal. Returns True if the
+        group was signalled."""
+        try:
+            pgid = os.getpgid(proc.pid)
+            if pgid == proc.pid:
+                os.killpg(pgid, sig)
+                return True
+        except (ProcessLookupError, PermissionError, OSError):
+            pass
+        return False
+
     try:
         if os.name == "posix":
-            try:
-                os.killpg(os.getpgid(proc.pid), signal.SIGTERM)
-            except (ProcessLookupError, PermissionError, OSError):
+            if not _signal_group(signal.SIGTERM):
                 proc.terminate()
         else:  # pragma: no cover - non-POSIX dev box
             proc.terminate()
@@ -642,7 +656,8 @@ def terminate_process(proc: subprocess.Popen | None, grace: float = 3.0) -> None
     except subprocess.TimeoutExpired:
         try:
             if os.name == "posix":
-                os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
+                if not _signal_group(signal.SIGKILL):
+                    proc.kill()
             else:  # pragma: no cover
                 proc.kill()
         except Exception:  # pragma: no cover
