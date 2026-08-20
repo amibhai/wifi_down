@@ -73,6 +73,14 @@ _NEURAL_MODEL: str        = "gpt-4o-mini"
 
 
 def _cleanup() -> None:
+    # Reap any long-lived RF children (airodump/reaver/hcxdumptool) first, so
+    # nothing keeps holding the card while we tear monitor mode down.
+    try:
+        from modules import radio
+        radio.SUPERVISOR.terminate_all()
+    except Exception:
+        pass
+
     if state.get("monitor_interface"):
         try:
             disable_monitor_mode(state["monitor_interface"])
@@ -83,6 +91,16 @@ def _cleanup() -> None:
                 f"    Run manually: sudo airmon-ng stop {state['monitor_interface']}",
                 file=sys.stderr,
             )
+    else:
+        # No monitor iface opened this run, but a prior (possibly crashed)
+        # session may have left network services stopped — put them back so the
+        # operator never loses connectivity to a bug.
+        try:
+            from modules import radio
+            if radio.has_pending_restore():
+                radio.restore_services()
+        except Exception:
+            pass
 
 
 def _action_check_interface() -> None:
@@ -117,6 +135,29 @@ def _action_check_interface() -> None:
         f"\n[bold cyan]◈ airmon-ng available:[/] "
         f"{'[green]yes[/]' if airmon_avail else '[red]no — install aircrack-ng[/]'}"
     )
+
+    # Reliability core visibility: rfkill, driver quirks, pending restore.
+    from modules import radio as _radio
+    rfk = _radio.wifi_rfkill_state(_radio._read_rfkill())
+    if not rfk.any_wifi:
+        rfk_msg = "[dim]no rfkill-managed wifi radio[/]"
+    elif rfk.hard_blocked:
+        rfk_msg = "[red]HARD blocked — enable via hardware switch/BIOS[/]"
+    elif rfk.soft_blocked_ids:
+        rfk_msg = f"[yellow]soft-blocked (ids {rfk.soft_blocked_ids}) — will unblock[/]"
+    else:
+        rfk_msg = "[green]clear[/]"
+    con.print(f"[bold cyan]◈ rfkill wifi state:[/] {rfk_msg}")
+
+    for iface in managed or []:
+        drv = _radio.driver_of(iface)
+        route = "iw fallback" if _radio.prefers_iw(drv) else "airmon-ng"
+        con.print(f"[bold cyan]◈ {iface} driver:[/] {drv or 'unknown'} "
+                  f"[dim](monitor route: {route})[/]")
+
+    if _radio.has_pending_restore():
+        con.print("[bold yellow]◈ Pending service restore:[/] "
+                  "a prior run left services stopped — run: sudo wifi-auditor --restore")
 
     is_root = os.geteuid() == 0
     con.print(
@@ -703,6 +744,8 @@ Examples:
                    help="OpenAI model for Neural Pathfinder (default: gpt-4o-mini)")
     p.add_argument("--check-interface", action="store_true",
                    help="Diagnose wireless interface and monitor mode status, then exit")
+    p.add_argument("--restore",      action="store_true",
+                   help="Restore network services stopped by a previous (crashed) run, then exit")
     p.add_argument("--debug",        action="store_true",
                    help="Enable DEBUG logging")
     return p
@@ -772,6 +815,20 @@ def main() -> None:
         _action_check_interface()
         return
 
+    if getattr(args, "restore", False):
+        from modules import radio
+        restored = radio.restore_services()
+        if restored:
+            success(f"Restored network services: {', '.join(restored)}")
+        else:
+            info("No pending network services to restore.")
+        for mon in radio.wireless_interfaces("monitor"):
+            try:
+                radio.disable_monitor(mon)
+            except Exception:
+                pass
+        return
+
     # ── Check for incomplete sessions ─────────────────────────────────────────
     incomplete = StateManager.list_incomplete()
     if incomplete and not (args.headless or args.auto):
@@ -815,6 +872,14 @@ def main() -> None:
     _check_first_run()
     check_dependencies()
     print_banner()
+
+    try:
+        from modules import radio as _radio
+        if _radio.has_pending_restore():
+            warn("A previous session left network services stopped — they'll be "
+                 "restored on exit (or run: sudo wifi-auditor --restore).")
+    except Exception:
+        pass
 
     import signal
     signal.signal(signal.SIGINT,  lambda s, f: (_cleanup(), sys.exit(0)))

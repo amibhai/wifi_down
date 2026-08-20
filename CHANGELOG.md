@@ -5,6 +5,72 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [2.1.0] — 2026-08-20
+
+**Reliability core re-engineered — the RF front-end that survives a real
+engagement.** This is Phase 1 of a broader hardening pass. The root cause of the
+worst field failures in tools of this class is never the attack logic — it is
+the interface plumbing: a soft-blocked radio, a driver airmon-ng can't drive, or
+a crash that leaves NetworkManager dead and the card stuck in monitor mode.
+Everything below is pure-logic-first (unit-tested without RF) wrapped by thin,
+guarded subprocess shims.
+
+### Added
+
+- **`modules/radio.py` — the reliability core.** A single module concentrating
+  every "why did monitor mode silently fail?" edge case:
+  - **rfkill awareness** — `ensure_rfkill_unblocked()` clears wifi *soft* blocks
+    and surfaces *hard* blocks (physical switch / BIOS) with an actionable
+    message instead of an opaque failure. JSON + classic-text parsers
+    (`parse_rfkill_json`, `parse_rfkill_text`, `wifi_rfkill_state`).
+  - **Symmetric service save/restore** — snapshots exactly which network
+    services were *active* (`NetworkManager`, `wpa_supplicant`, `iwd`,
+    `systemd-networkd`, `connman`, `netctl-auto`, `dhcpcd`, …), stops only
+    those, **persists the set to disk**, and restarts only what it stopped. No
+    more blindly `systemctl start NetworkManager` on an `iwd` box.
+  - **Driver-quirk routing** — `driver_of()` + `prefers_iw()` detect Realtek
+    out-of-tree chipsets (88xxau/88x2bu/8821cu…) that drive monitor mode more
+    reliably through `iw` than airmon-ng, and route around the breakage.
+  - **airmon-ng ↔ iw fallback** — `enable_monitor()` tries airmon-ng, *verifies
+    the claim* via `iw dev`, and falls back to the raw `ip link` + `iw set type
+    monitor` path when airmon-ng is absent or lies. `disable_monitor()` reverses
+    it and restores services.
+  - **Band/channel math** for 2.4 **and** 5 **and** 6 GHz
+    (`channel_to_freq`/`freq_to_band`, incl. the 6 GHz ch-2 anchor).
+  - **`ProcessSupervisor`** — a central registry that spawns children in their
+    own process group so one `terminate_all()` reaps airodump/reaver/hcxdumptool
+    on Ctrl-C or crash — no orphan left holding the card.
+  - **A correct airmon-ng output parser** — `parse_airmon_new_iface()` now
+    actually matches the modern `for [phy0]wlan0 on [phy0]wlan0mon` phrasing
+    (the previous regex never did; it silently relied on a re-scan fallback).
+- **`tests/test_radio.py`** — 59 pure-logic + behavioural unit tests (band math,
+  rfkill/iw/ethtool parsers, driver quirks, persisted service restore, live
+  `ProcessSupervisor` child reaping). Zero RF, cross-platform.
+- **`wifi-auditor --restore`** — one-shot recovery for a crashed prior run:
+  restarts the network services it left stopped and returns any lingering
+  monitor iface to managed.
+
+### Changed
+
+- **`modules/interface.py` is now a thin compatibility facade** over
+  `modules/radio.py`. Every public symbol the codebase and tests import
+  (`enable_monitor_mode`, `disable_monitor_mode`, `get_wireless_interfaces`,
+  `get_monitor_interfaces`, `kill_interfering_processes`,
+  `parse_new_interface_from_output`, `_interface_matches`, `verify_monitor_mode`,
+  `verify_channel`, `check_injection_support`) is preserved — no downstream
+  change required.
+- **`wifi_auditor/cli.py`** — `_cleanup()` now reaps supervised RF children and
+  restores services even when no monitor iface was opened this run; startup
+  warns if a prior session left services stopped; `--check-interface` now shows
+  rfkill state, per-iface driver, and the chosen monitor route.
+
+### Verification
+
+- Full suite **259 passing** (`py -3.12 -m pytest -q`) — 200 pre-existing + 59
+  new, zero regressions. Public API unchanged.
+
+---
+
 ## [0.9.0] — 2026-08-07
 
 **Handshake capture & active-client detection re-engineered** — event-driven,
