@@ -591,73 +591,88 @@ def run_headless(
         return 1
     sm.transition(Stage.INTERFACE, interface=iface, monitor_interface=mon)
 
-    logger.info("Scanning for target %s ...", target_bssid)
-    sm.transition(Stage.SCANNING)
-    networks = scan_networks(mon, duration=20)
-    target = next((n for n in networks if n["bssid"].upper() == target_bssid.upper()), None)
-
-    if not target:
-        logger.error("Target BSSID %s not found in scan", target_bssid)
-        disable_monitor_mode(mon)
-        sm.transition(Stage.FAILED)
-        return 1
-
-    sm.transition(Stage.SCANNING, target_bssid=target_bssid, target_ssid=target.get("ssid", ""))
-    _sequencer.score_target(target)
-
-    logger.info("Capturing handshake for %s ...", target_bssid)
-    sm.transition(Stage.CAPTURING)
-    cap = capture_handshake(
-        bssid=target["bssid"],
-        ssid=target.get("ssid", target["bssid"]),
-        channel=target["channel"],
-        monitor_interface=mon,
-        security=target.get("security_tier", ""),
-        band=target.get("band", ""),
-    )
-    if not cap:
-        logger.error("Handshake capture failed")
-        disable_monitor_mode(mon)
-        sm.transition(Stage.FAILED)
-        return 1
-    sm.transition(Stage.CAPTURING, capture_file=cap, handshake_file=cap)
-
-    logger.info("Generating target-driven wordlist ...")
-    sm.transition(Stage.WORDLIST)
-    wl = None
+    # Guaranteed teardown: whatever happens below (success, failure, an
+    # exception, or a Ctrl-C that slips past the StateManager signal handler),
+    # reap RF children and restore the interface + network services
+    # symmetrically so a headless run never strands the operator's networking.
     try:
-        from modules import strategy as _strategy
-        wl = _strategy.build_auto_wordlist(target)
-        if wl:
-            logger.info("Auto-wordlist plan: %s",
-                        _strategy.describe_plan(_strategy.recommend_strategies(target)))
-    except Exception as exc:
-        logger.debug("auto-wordlist failed, falling back: %s", exc)
-    if not wl:
-        wl = wordlist_menu(target.get("ssid", ""), auto=True)
-    if not wl:
-        logger.error("Wordlist generation failed")
-        sm.transition(Stage.FAILED)
-        return 1
-    sm.transition(Stage.WORDLIST, wordlist_file=wl)
+        logger.info("Scanning for target %s ...", target_bssid)
+        sm.transition(Stage.SCANNING)
+        networks = scan_networks(mon, duration=20)
+        target = next(
+            (n for n in networks if n["bssid"].upper() == target_bssid.upper()), None
+        )
 
-    logger.info("Cracking ...")
-    sm.transition(Stage.CRACKING)
-    cracker_menu(cap, wl)
+        if not target:
+            logger.error("Target BSSID %s not found in scan", target_bssid)
+            sm.transition(Stage.FAILED)
+            return 1
 
-    sm.transition(Stage.DONE)
-    disable_monitor_mode(mon)
+        sm.transition(
+            Stage.SCANNING, target_bssid=target_bssid, target_ssid=target.get("ssid", "")
+        )
+        _sequencer.score_target(target)
 
-    duration = time.monotonic() - t_start
-    emit_session_summary(
-        session_id=sm.state.session_id,
-        target=target_bssid,
-        stage_reached=Stage.DONE.value,
-        result=sm.state.result,
-        duration_s=duration,
-        errors=[],
-    )
-    return 0
+        logger.info("Capturing handshake for %s ...", target_bssid)
+        sm.transition(Stage.CAPTURING)
+        cap = capture_handshake(
+            bssid=target["bssid"],
+            ssid=target.get("ssid", target["bssid"]),
+            channel=target["channel"],
+            monitor_interface=mon,
+            security=target.get("security_tier", ""),
+            band=target.get("band", ""),
+            max_bursts_per_min=deauth_limit,
+        )
+        if not cap:
+            logger.error("Handshake capture failed")
+            sm.transition(Stage.FAILED)
+            return 1
+        sm.transition(Stage.CAPTURING, capture_file=cap, handshake_file=cap)
+
+        logger.info("Generating target-driven wordlist ...")
+        sm.transition(Stage.WORDLIST)
+        wl = None
+        try:
+            from modules import strategy as _strategy
+            wl = _strategy.build_auto_wordlist(target)
+            if wl:
+                logger.info("Auto-wordlist plan: %s",
+                            _strategy.describe_plan(_strategy.recommend_strategies(target)))
+        except Exception as exc:
+            logger.debug("auto-wordlist failed, falling back: %s", exc)
+        if not wl:
+            wl = wordlist_menu(target.get("ssid", ""), auto=True)
+        if not wl:
+            logger.error("Wordlist generation failed")
+            sm.transition(Stage.FAILED)
+            return 1
+        sm.transition(Stage.WORDLIST, wordlist_file=wl)
+
+        logger.info("Cracking ...")
+        sm.transition(Stage.CRACKING)
+        cracker_menu(cap, wl)
+
+        sm.transition(Stage.DONE)
+
+        duration = time.monotonic() - t_start
+        emit_session_summary(
+            session_id=sm.state.session_id,
+            target=target_bssid,
+            stage_reached=Stage.DONE.value,
+            result=sm.state.result,
+            duration_s=duration,
+            errors=[],
+        )
+        return 0
+    finally:
+        try:
+            from modules import radio as _radio
+            _radio.SUPERVISOR.terminate_all()
+            if _radio.is_monitor(mon):
+                disable_monitor_mode(mon)
+        except Exception as exc:
+            logger.debug("headless cleanup error: %s", exc)
 
 
 ###############################################################################

@@ -18,8 +18,12 @@ import threading
 import time
 
 from modules import radio
-from modules.banner import C, error, info, print_section, success, warn
-from modules.ratelimit import DEFAULT_MAX_BURSTS_PER_MIN, DeauthRateLimiter
+from modules.banner import C, clear_screen, error, info, print_section, success, warn
+from modules.ratelimit import (
+    DEFAULT_MAX_BURSTS_PER_MIN,
+    MAX_ALLOWED_BURSTS_PER_MIN,
+    DeauthRateLimiter,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -101,10 +105,10 @@ def deauth_menu(
     # ── Deauth limit ──────────────────────────────────────────────────────────
     try:
         lim_input = input(
-            f"  {C.YELLOW}Max bursts/min [{deauth_limit}] (max {DEFAULT_MAX_BURSTS_PER_MIN}): {C.RESET}"
+            f"  {C.YELLOW}Max bursts/min [{deauth_limit}] (max {MAX_ALLOWED_BURSTS_PER_MIN}): {C.RESET}"
         ).strip()
         if lim_input:
-            deauth_limit = max(1, min(int(lim_input), 20))
+            deauth_limit = max(1, min(int(lim_input), MAX_ALLOWED_BURSTS_PER_MIN))
     except ValueError:
         pass
 
@@ -208,7 +212,7 @@ def _parse_clients_csv(csv_path: str, bssid: str) -> list[dict]:
 
 
 def _print_client_table(clients: list[dict], caption: str = "") -> None:
-    os.system("clear")
+    clear_screen()
     if caption:
         print(f"\n  {C.CYAN}{caption}{C.RESET}\n")
     if not clients:
@@ -355,7 +359,7 @@ def _build_cmd(interface: str, bssid: str, client_mac: str, count: int) -> list[
 
 
 def _draw_stats(stats: dict, bssid: str, ssid: str, limiter: DeauthRateLimiter) -> None:
-    os.system("clear")
+    clear_screen()
     rate_info = limiter.get_stats(bssid)
     total_pkts = sum(s["packets"] for s in stats.values())
     total_acks = sum(s["acks"]    for s in stats.values())
@@ -390,14 +394,34 @@ def _get_interface_mac(interface: str) -> str | None:
 
 
 def _spoof_mac(interface: str, new_mac: str) -> bool:
-    try:
-        subprocess.run(["ip", "link", "set", interface, "down"],   capture_output=True)
-        subprocess.run(["ip", "link", "set", interface, "address", new_mac], capture_output=True)
-        subprocess.run(["ip", "link", "set", interface, "up"],     capture_output=True)
-        return True
-    except Exception:
+    """Set *interface* MAC to *new_mac*, verifying the change actually took.
+
+    ``ip link set address`` is silently rejected by some drivers, so we confirm
+    with a read-back and genuinely fall back to ``macchanger`` on failure —
+    instead of reporting success just because the commands ran. The interface is
+    always brought back up, even on the failure path.
+    """
+    def _ip_set() -> bool:
         try:
-            subprocess.run(["macchanger", "-m", new_mac, interface], capture_output=True)
-            return True
-        except Exception:
+            subprocess.run(["ip", "link", "set", interface, "down"],
+                           capture_output=True, timeout=10)
+            r = subprocess.run(["ip", "link", "set", interface, "address", new_mac],
+                               capture_output=True, timeout=10)
+            subprocess.run(["ip", "link", "set", interface, "up"],
+                           capture_output=True, timeout=10)
+            if r.returncode != 0:
+                return False
+            got = _get_interface_mac(interface)
+            return got is not None and got.upper() == new_mac.upper()
+        except (OSError, subprocess.TimeoutExpired):
             return False
+
+    if _ip_set():
+        return True
+
+    try:
+        r = subprocess.run(["macchanger", "-m", new_mac, interface],
+                           capture_output=True, timeout=10)
+        return r.returncode == 0
+    except (OSError, subprocess.TimeoutExpired):
+        return False

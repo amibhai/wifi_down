@@ -68,17 +68,49 @@ class StateManager:
         sys.exit(0)
 
     def _cleanup_interface(self) -> None:
-        if self.state.monitor_interface:
+        """Tear down RF children and restore the box *symmetrically*.
+
+        Delegates to :mod:`modules.radio` so a signal-driven cleanup never leaves
+        the operator's networking stopped or airodump/reaver orphaned — the raw
+        ``airmon-ng stop`` this used to run did neither (no service restore, no
+        supervisor teardown), which could strand a headless run's connectivity on
+        Ctrl-C. The import is lazy to keep state.py free of an RF dependency at
+        import time, and falls back to the old behaviour if radio is unavailable.
+        """
+        try:
+            from modules import radio
+        except Exception:
+            radio = None  # type: ignore[assignment]
+
+        if radio is not None:
             try:
-                logger.info("Stopping monitor mode on %s", self.state.monitor_interface)
-                subprocess.run(
-                    ["airmon-ng", "stop", self.state.monitor_interface],
-                    capture_output=True,
-                    timeout=10,
-                )
+                radio.SUPERVISOR.terminate_all()
+            except Exception as exc:
+                logger.debug("Supervisor teardown error: %s", exc)
+
+        iface = self.state.monitor_interface
+        if iface:
+            logger.info("Restoring %s to managed mode + network services", iface)
+            try:
+                if radio is not None:
+                    radio.disable_monitor(iface)   # airmon/iw + symmetric restore
+                else:
+                    subprocess.run(
+                        ["airmon-ng", "stop", iface],
+                        capture_output=True,
+                        timeout=10,
+                    )
             except Exception as exc:
                 logger.debug("Interface cleanup error: %s", exc)
             self.state.monitor_interface = None
+        elif radio is not None:
+            # No monitor iface this session, but a prior run may have left network
+            # services stopped — restore them so a signal never strands the box.
+            try:
+                if radio.has_pending_restore():
+                    radio.restore_services()
+            except Exception as exc:
+                logger.debug("Service restore error: %s", exc)
 
     def transition(self, stage: Stage, **kwargs: object) -> None:
         """Move to *stage*, set any extra fields in *kwargs*, then persist."""

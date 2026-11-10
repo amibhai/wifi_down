@@ -16,7 +16,9 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 def _patch_oui_db(tmp_path, monkeypatch):
     import modules.oui as oui_module
     monkeypatch.setattr(oui_module, "OUI_DB_PATH", tmp_path / "oui.db")
-    monkeypatch.setattr(oui_module, "CACHE_TTL", 0)  # always refresh in tests
+    # Large TTL so get_vendor() never auto-refreshes (and hits the real network)
+    # after the explicit mocked refresh_database(force=True) — keeps tests hermetic.
+    monkeypatch.setattr(oui_module, "CACHE_TTL", 10**9)
     yield
 
 

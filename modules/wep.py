@@ -240,7 +240,7 @@ def _pipeline_fragmentation(interface, bssid, channel, essid, cap_base) -> str |
         '-y', xor_file,
         '-w', arp_file,
     ]
-    r = subprocess.run(pg_cmd, capture_output=True, text=True)
+    r = subprocess.run(pg_cmd, capture_output=True, text=True, timeout=60)
     if r.returncode != 0 or not os.path.exists(arp_file):
         error(f"packetforge-ng failed: {r.stderr}")
         _kill(dump_proc)
@@ -344,7 +344,7 @@ def _pipeline_chopchop(interface, bssid, channel, essid, cap_base) -> str | None
         '-y', xor_file,
         '-w', arp_file,
     ]
-    subprocess.run(pg_cmd, capture_output=True)
+    subprocess.run(pg_cmd, capture_output=True, timeout=60)
 
     if not os.path.exists(arp_file):
         error("Could not craft ARP packet.")
@@ -588,7 +588,7 @@ def _get_interface_mac(interface: str) -> str | None:
     """Return the MAC address of `interface` using ip-link."""
     try:
         r = subprocess.run(['ip', 'link', 'show', interface],
-                           capture_output=True, text=True)
+                           capture_output=True, text=True, timeout=5)
         m = re.search(r'link/ether\s+([0-9a-fA-F:]{17})', r.stdout)
         if m:
             return m.group(1).upper()
@@ -596,7 +596,7 @@ def _get_interface_mac(interface: str) -> str | None:
         pass
     # Fallback: iwconfig
     try:
-        r = subprocess.run(['iwconfig', interface], capture_output=True, text=True)
+        r = subprocess.run(['iwconfig', interface], capture_output=True, text=True, timeout=5)
         for line in r.stdout.splitlines():
             m = re.search(r'(\w+)\s+Access Point:\s+([0-9A-Fa-f:]{17})', line)
             if m:

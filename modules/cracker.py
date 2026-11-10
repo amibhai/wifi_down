@@ -21,7 +21,11 @@ from modules import radio
 from modules.banner import C, error, found, info, print_section, success, warn
 
 RESULTS_DIR = "results"
-os.makedirs(RESULTS_DIR, exist_ok=True)
+
+
+def _ensure_results_dir() -> None:
+    """Create results/ on demand rather than at import time."""
+    os.makedirs(RESULTS_DIR, exist_ok=True)
 
 # Hashcat rule search paths (ordered by preference)
 _RULE_SEARCH_PATHS = [
@@ -242,6 +246,7 @@ def _run_aircrack(capture_file: str, wordlist_file: str) -> None:
     start = time.time()
     output_lines: list[str] = []
 
+    proc = None
     try:
         proc = radio.spawn(
             cmd,
@@ -256,9 +261,13 @@ def _run_aircrack(capture_file: str, wordlist_file: str) -> None:
             _print_aircrack_line(line)
         proc.wait()
     except KeyboardInterrupt:
-        proc.terminate()
-        proc.wait()
+        if proc is not None:
+            proc.terminate()
+            proc.wait()
         warn("Cracking aborted by user.")
+        return
+    except OSError as exc:
+        error(f"Could not launch aircrack-ng: {exc}")
         return
 
     elapsed = time.time() - start
@@ -307,6 +316,7 @@ def _run_cowpatty(capture_file: str, wordlist_file: str, ssid: str) -> None:
     start = time.time()
     output_lines: list[str] = []
 
+    proc = None
     try:
         proc = radio.spawn(
             cmd,
@@ -321,9 +331,13 @@ def _run_cowpatty(capture_file: str, wordlist_file: str, ssid: str) -> None:
             _print_cowpatty_line(line)
         proc.wait()
     except KeyboardInterrupt:
-        proc.terminate()
-        proc.wait()
+        if proc is not None:
+            proc.terminate()
+            proc.wait()
         warn("cowpatty aborted by user.")
+        return
+    except OSError as exc:
+        error(f"Could not launch cowpatty: {exc}")
         return
 
     elapsed = time.time() - start
@@ -370,6 +384,7 @@ def _run_hashcat(hash_file: str, wordlist_file: str, rules: str | None = None) -
     # We disable the potfile (so re-runs always attempt the crack) which means
     # hashcat won't record the result there — write cracked plaintext to an
     # explicit outfile and read it back. --outfile-format 2 = plaintext only.
+    _ensure_results_dir()
     outfile = os.path.join(RESULTS_DIR, f"hashcat_cracked_{int(time.time())}.txt")
     cmd = [
         "hashcat",
@@ -387,6 +402,7 @@ def _run_hashcat(hash_file: str, wordlist_file: str, rules: str | None = None) -
         cmd += ["-r", rules]
 
     start = time.time()
+    proc = None
     try:
         proc = radio.spawn(
             cmd,
@@ -400,8 +416,12 @@ def _run_hashcat(hash_file: str, wordlist_file: str, rules: str | None = None) -
                 _print_hashcat_line(line)
         proc.wait()
     except KeyboardInterrupt:
-        proc.terminate()
+        if proc is not None:
+            proc.terminate()
         warn("hashcat aborted.")
+        return
+    except OSError as exc:
+        error(f"Could not launch hashcat: {exc}")
         return
 
     elapsed = time.time() - start
@@ -453,12 +473,16 @@ def _convert_cap_to_hc22000(cap_file: str) -> str | None:
         warn("hcxpcapngtool not found — install hcxtools: sudo apt install hcxtools")
         return None
 
-    out = cap_file.replace(".cap", ".hc22000")
+    out = os.path.splitext(cap_file)[0] + ".hc22000"
     info(f"Converting {os.path.basename(cap_file)} → hc22000 format...")
-    result = subprocess.run(
-        ["hcxpcapngtool", "-o", out, cap_file],
-        capture_output=True, text=True,
-    )
+    try:
+        result = subprocess.run(
+            ["hcxpcapngtool", "-o", out, cap_file],
+            capture_output=True, text=True, timeout=60,
+        )
+    except subprocess.TimeoutExpired:
+        warn("hcxpcapngtool timed out during conversion.")
+        return None
     if os.path.exists(out) and os.path.getsize(out) > 0:
         success(f"Converted: {out}")
         return out
@@ -549,7 +573,7 @@ def _has_handshake(cap_file: str) -> bool:
 
 def _count_lines(path: str) -> int:
     try:
-        result = subprocess.run(["wc", "-l", path], capture_output=True, text=True)
+        result = subprocess.run(["wc", "-l", path], capture_output=True, text=True, timeout=30)
         return int(result.stdout.split()[0])
     except Exception:
         return 0
@@ -558,6 +582,7 @@ def _count_lines(path: str) -> int:
 def _save_result(
     capture: str, wordlist: str, key: str, elapsed: float, backend: str
 ) -> None:
+    _ensure_results_dir()
     stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     path  = os.path.join(RESULTS_DIR, f"result_{stamp}.txt")
     with open(path, "w") as f:

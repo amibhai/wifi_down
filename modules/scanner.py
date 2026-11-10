@@ -14,7 +14,7 @@ import tempfile
 import time
 
 from modules import radio
-from modules.banner import C, error, info, print_section, success, warn
+from modules.banner import C, clear_screen, error, info, print_section, success, warn
 
 logger = logging.getLogger(__name__)
 
@@ -390,7 +390,7 @@ _TAG_COLORS = {
 
 
 def _print_network_table(networks: list[dict], caption: str = "") -> None:
-    os.system("clear")
+    clear_screen()
     if caption:
         print(f"\n  {C.CYAN}{caption}{C.RESET}\n")
 

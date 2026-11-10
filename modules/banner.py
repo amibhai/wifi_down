@@ -34,6 +34,13 @@ class Colors:
 C = Colors
 
 
+def clear_screen() -> None:
+    """Clear the terminal, honouring the OS (``clear`` on POSIX, ``cls`` on
+    Windows). Centralised so callers never run a bare ``clear`` that errors on a
+    non-POSIX shell."""
+    os.system("clear" if os.name == "posix" else "cls")
+
+
 def _make_console() -> Console:
     import io
     if hasattr(sys.stdout, "buffer"):
@@ -304,7 +311,7 @@ def print_banner() -> None:
         7. typewriter + pulsing Enter prompt (_print_enter_prompt)
            → console.clear() after Enter
     """
-    os.system("clear" if os.name == "posix" else "cls")
+    clear_screen()
 
     iface = _get_interface()
     ts    = datetime.now().strftime("%Y-%m-%d  %H:%M:%S")

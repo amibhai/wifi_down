@@ -104,7 +104,7 @@ def channel_to_freq(channel: int, band: str | None = None) -> int | None:
     """
     ch = int(channel)
     if band is None:
-        band = "2.4" if ch <= 14 else ("5" if ch <= 196 else "6")
+        band = "2.4" if ch <= 14 else ("5" if ch <= 177 else "6")
 
     if band == "2.4":
         if ch == 14:
@@ -114,7 +114,7 @@ def channel_to_freq(channel: int, band: str | None = None) -> int | None:
         return None
     if band == "5":
         # 5 GHz: f = 5000 + ch*5  (covers 36…177 and the low U-NII 7…14 range)
-        if 1 <= ch <= 196:
+        if 1 <= ch <= 177:
             return 5000 + ch * 5
         return None
     if band == "6":
@@ -132,7 +132,7 @@ def band_of_channel(channel: int) -> str:
     ch = int(channel)
     if ch <= 14:
         return "2.4"
-    if ch <= 196:
+    if ch <= 177:
         return "5"
     return "6"
 

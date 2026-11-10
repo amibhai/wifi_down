@@ -443,7 +443,7 @@ def _save(cap_path: str, bssid: str) -> str:
     logger.info("Handshake saved: %s SHA256=%s", dest, sha)
 
     if ext == '.cap':
-        hc = dest.replace('.cap', '.hc22000')
+        hc = os.path.splitext(dest)[0] + '.hc22000'
         for tool in ('hcxpcapngtool', 'hcxpcaptool'):
             try:
                 subprocess.run(
@@ -722,6 +722,7 @@ def capture_handshake(
     deauth_count: int = 12,
     security: str = "",
     band: str = "",
+    max_bursts_per_min: int = MAX_ALLOWED_BURSTS_PER_MIN,
 ) -> str | None:
     """
     Capture a crackable WPA/WPA2 4-way handshake (or PMKID). Returns the saved
@@ -787,7 +788,7 @@ def capture_handshake(
     child_procs: list[subprocess.Popen] = []
     airodump_proc: subprocess.Popen | None = None
     monitor = LiveMonitor(iface, bssid)
-    limiter = DeauthRateLimiter(max_bursts_per_min=MAX_ALLOWED_BURSTS_PER_MIN)
+    limiter = DeauthRateLimiter(max_bursts_per_min=max_bursts_per_min)
     last_verify = [0.0]
     last_trigger = [0.0]
 
