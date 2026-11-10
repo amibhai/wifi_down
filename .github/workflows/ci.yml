@@ -11,7 +11,7 @@ jobs:
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        python-version: ["3.10", "3.11", "3.12"]
+        python-version: ["3.10", "3.11", "3.12", "3.13"]
 
     steps:
       - uses: actions/checkout@v4
@@ -39,3 +39,30 @@ jobs:
 
       - name: Run tests
         run: pytest tests/ -v --tb=short
+
+  package:
+    # Proves the project actually builds and installs, and that the console
+    # entry point works — this is what would have caught the broken build
+    # backend that shipped in 2.11.0.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Build sdist + wheel
+        run: |
+          python -m pip install --upgrade pip build
+          python -m build
+
+      - name: Install the built wheel in a clean venv
+        run: |
+          python -m venv /tmp/wa-venv
+          /tmp/wa-venv/bin/pip install --upgrade pip
+          /tmp/wa-venv/bin/pip install dist/*.whl
+
+      - name: Smoke-test the console entry point
+        run: /tmp/wa-venv/bin/wifi-auditor --version
