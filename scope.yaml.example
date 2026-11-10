@@ -1,9 +1,14 @@
-# WiFi Auditor — Scope Authorization File
-# Copy this file to scope.yaml and fill in your authorized targets.
-# Run: wifi-auditor --scope-wizard   (interactive builder with 6-point checklist)
+# WiFi Auditor — Scope Authorization Record (template)
 #
-# LEGAL NOTICE: Only add networks you own or have EXPLICIT WRITTEN PERMISSION to test.
-# Unauthorized access is a criminal offence (CFAA / UK CMA / India IT Act 2000).
+# This is a MANUAL record template for your own engagement paperwork / audit
+# trail. Copy it to scope.yaml and document the networks you are authorized to
+# test. NOTE: the tool does not currently read or enforce this file — it is a
+# documentation aid, not an access control. You remain solely responsible for
+# testing only in-scope networks.
+#
+# LEGAL NOTICE: Only list networks you own or have EXPLICIT WRITTEN PERMISSION
+# to test. Unauthorized access is a criminal offence (CFAA / UK CMA / India IT
+# Act 2000).
 
 authorized_targets:
   - bssid: "AA:BB:CC:DD:EE:FF"

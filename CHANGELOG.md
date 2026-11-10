@@ -5,6 +5,54 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [Unreleased] — Hardening pass
+
+**Correctness, reliability & packaging fixes.** No new attack capabilities —
+reliability and safety hardening of the existing authorized-use feature set.
+
+### Fixed
+
+- **Packaging:** `pyproject.toml` named a non-existent build backend
+  (`setuptools.backends.legacy:build`), which broke `pip install .`, wheel
+  builds, and the `wifi-auditor` console entry point. Now `setuptools.build_meta`.
+- **Headless cleanup:** a Ctrl-C (or crash) in `--headless` mode could leave
+  network services stopped and `airodump-ng` orphaned. `StateManager`'s signal
+  cleanup now reaps supervised children and restores services symmetrically via
+  `modules.radio` (no more bare `airmon-ng stop`), and `run_headless` guarantees
+  teardown in a `finally`.
+- **`--deauth-limit`** was ignored in headless mode; it is now threaded into
+  `capture_handshake` (interactive capture keeps its faster default).
+- **Subprocess hangs:** added timeouts to previously-unbounded calls
+  (`hcxpcapngtool` conversion, MAC-spoof `ip link`/`macchanger`, `wc -l`, WEP
+  packetforge / interface reads).
+- **MAC spoof** now verifies the change and genuinely falls back to `macchanger`
+  on failure, instead of reporting success when `ip link set address` is rejected.
+- **cap→hc22000 conversion** no longer risks overwriting the input capture when
+  the path lacks a clean `.cap` token (uses `os.path.splitext`).
+- **Cracker backends** no longer risk `NameError` / uncaught errors when a tool
+  is missing — clean error message + guarded teardown.
+- **Band labels** are self-consistent across `channel_to_freq` / `freq_to_band` /
+  `band_of_channel` at the 5/6 GHz boundary.
+- **Docs:** `scope.yaml.example` no longer references the unimplemented
+  `--scope-wizard` command; it is documented as a manual authorization record.
+
+### Changed
+
+- `os.system("clear")` calls are centralized behind a `banner.clear_screen()`
+  helper that honors the OS (no bare `clear` on non-POSIX shells).
+- `results/` is created on demand rather than as an import-time side effect.
+
+### CI
+
+- Added a packaging smoke-test (build wheel → install in a clean venv → run
+  `wifi-auditor --version`) and Python 3.13 to the test matrix.
+
+### Tests
+
+- New `tests/test_hardening.py` pins each of the above fixes as a regression test.
+
+---
+
 ## [2.11.0] — 2026-08-20
 
 **Loose ends closed — Phase 11.** Four gaps between "strong" and "complete":
